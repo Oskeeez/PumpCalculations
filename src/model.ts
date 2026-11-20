@@ -3,6 +3,7 @@
  * UI units: flow L/s, diameter & roughness mm, pressure kPa (absolute), temperature degC, efficiency %,
  * viscosity mPa.s.
  */
+import type { Assumption, Draft, Target } from './ai/types';
 import { DEFAULT_CANVAS, DEFAULT_SCALE_M_PER_PX, lengthFromCanvas } from './geometry';
 import {
   NetworkError,
@@ -74,6 +75,8 @@ export interface PumpUI {
   head: { q: number; h: number }[];
   efficiency: { q: number; eta: number }[];
   npshr: { q: number; h: number }[];
+  /** Impeller trim, D/D_full (1 = full diameter). Scales the curves by the affinity laws: Q ∝ D, H ∝ D². */
+  impellerTrim?: number;
 }
 
 /** 'orifice': lossValue is the bore diameter [mm]; K is derived from the bore/diameter ratio and orificeCd. */
@@ -128,6 +131,12 @@ export interface ProjectUI {
   images: ImageLayer[];
   /** Saved what-if snapshots of the network (see analysis.ts). */
   scenarios?: Scenario[];
+  /** Design targets (see ai/targets.ts). */
+  targets?: Target[];
+  /** Assumptions recorded for AI-generated parts of the network. */
+  assumptions?: Assumption[];
+  /** AI drafts. Held outside the undo history by the app, but saved in the project file. */
+  drafts?: Draft[];
 }
 
 export interface ImageLayer {
@@ -146,7 +155,7 @@ export interface ImageLayer {
 }
 
 /** Everything the hydraulic calculation needs (no images, no saved scenarios). */
-export type HydraulicProject = Omit<ProjectUI, 'scenarios' | 'images'>;
+export type HydraulicProject = Omit<ProjectUI, 'scenarios' | 'images' | 'targets' | 'assumptions' | 'drafts'>;
 
 /** A named snapshot of the hydraulic model (images are not part of a snapshot). */
 export interface Scenario {
@@ -397,10 +406,12 @@ export function toSystemModel(p: HydraulicProject): SystemModel {
     }
     if (!(e.speedRatio > 0)) throw new Error(`${e.name}: speed ratio must be > 0.`);
     if (e.head.length < 2 || new Set(e.head.map((x) => x.q)).size < 2) throw new Error(`${e.name}: head curve needs at least 2 points with different flows.`);
+    const trim = e.impellerTrim ?? 1;
+    if (!(trim > 0 && trim <= 1.0001)) throw new Error(`${e.name}: impeller trim must be between 0 and 1.`);
     const model: PumpModel = fitPump({
-      head: e.head.map((x) => ({ flowM3s: x.q / 1000, headM: x.h })),
-      efficiency: e.efficiency.length >= 2 ? e.efficiency.map((x) => ({ flowM3s: x.q / 1000, eta: x.eta / 100 })) : undefined,
-      npshr: e.npshr.length >= 2 ? e.npshr.map((x) => ({ flowM3s: x.q / 1000, npshrM: x.h })) : undefined,
+      head: e.head.map((x) => ({ flowM3s: (x.q / 1000) * trim, headM: x.h * trim * trim })),
+      efficiency: e.efficiency.length >= 2 ? e.efficiency.map((x) => ({ flowM3s: (x.q / 1000) * trim, eta: x.eta / 100 })) : undefined,
+      npshr: e.npshr.length >= 2 ? e.npshr.map((x) => ({ flowM3s: (x.q / 1000) * trim, npshrM: x.h * trim * trim })) : undefined,
     });
     return { kind: 'pump', id: e.name, from, to, model, speedRatio: e.speedRatio };
   });
@@ -518,6 +529,32 @@ function normalizeProject(p: Partial<ProjectUI> | undefined, depth = 0): Project
     project.images = p.images.map((im) => {
       if (!im || !isStr(im.id) || !isStr(im.name) || !isStr(im.dataUrl) || ![im.x, im.y, im.width, im.height, im.opacity].every(isNum)) throw new Error('An image in the project file is malformed.');
       return { ...im, locked: im.locked === true };
+    });
+  }
+  if (p.targets !== undefined) {
+    if (!Array.isArray(p.targets) || p.targets.some((t) => !t || !isStr(t.id) || !['flow', 'pressure', 'velocity', 'pumpRange', 'npsh'].includes(t.type))) throw new Error('A target in the project file is malformed.');
+    project.targets = p.targets;
+  }
+  if (p.assumptions !== undefined) {
+    if (!Array.isArray(p.assumptions) || p.assumptions.some((a) => !a || !isStr(a.id) || !isStr(a.text))) throw new Error('An assumption in the project file is malformed.');
+    project.assumptions = p.assumptions;
+  }
+  if (depth === 0 && p.drafts !== undefined) {
+    if (!Array.isArray(p.drafts)) throw new Error('The drafts in the project file are malformed.');
+    const hyd = (x: unknown): HydraulicProject => {
+      const { scenarios: _s, images: _i, targets: _t, assumptions: _a, drafts: _d, ...rest } = normalizeProject(x as Partial<ProjectUI>, 1);
+      return rest;
+    };
+    project.drafts = p.drafts.map((d) => {
+      if (!d || !isStr(d.id) || !isStr(d.name) || !d.base || !Array.isArray(d.targets) || !Array.isArray(d.changes)) throw new Error('A draft in the project file is malformed.');
+      return {
+        ...d,
+        rationale: isStr(d.rationale) ? d.rationale : '',
+        project: hyd(d.project),
+        base: { project: hyd(d.base.project), targets: Array.isArray(d.base.targets) ? d.base.targets : [] },
+        assumptions: Array.isArray(d.assumptions) ? d.assumptions : [],
+        status: d.status === 'merged' || d.status === 'discarded' ? d.status : 'open',
+      };
     });
   }
   if (depth === 0 && Array.isArray(p.scenarios)) {
