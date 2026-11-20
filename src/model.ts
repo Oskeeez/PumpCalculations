@@ -191,6 +191,62 @@ export function newValve(from: string, to: string, taken: string[]): ValveUI {
   return { kind: 'valve', uid: newUid(), name: uniqueName('Valve', taken), from, to, diameterMm: 102.26, lossType: 'K', lossValue: 0.15, checkValve: false, open: true, controlType: 'none', controlValue: 200 };
 }
 
+export type InsertKind = 'junction' | 'valve' | 'pump';
+
+/**
+ * Insert a junction, valve or pump into an existing pipe at the point on the pipe closest to (x, y).
+ * The pipe is split in two (the original keeps its uid, name, fittings and upstream end; the new downstream
+ * pipe copies its diameter, roughness and length mode). Manual lengths are shared in proportion to the split.
+ * A valve or pump sits between two new junctions placed a short distance apart along the line.
+ */
+export function insertOnPipe(p: ProjectUI, pipeUid: string, kind: InsertKind, x: number, y: number): { project: ProjectUI; selectUid: string } {
+  const pipe = p.edges.find((e) => e.uid === pipeUid);
+  if (!pipe || pipe.kind !== 'pipe') throw new Error('Elements can only be inserted into a pipe.');
+  const a = p.nodes.find((n) => n.uid === pipe.from);
+  const b = p.nodes.find((n) => n.uid === pipe.to);
+  if (!a || !b) throw new Error(`${pipe.name} is connected to a missing node.`);
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / (len * len)));
+  const half = kind === 'junction' ? 0 : Math.min(25 / len, 0.2);
+  const t1 = Math.max(0.1, Math.min(0.9 - 2 * half, t - half));
+  const t2 = kind === 'junction' ? t1 : t1 + 2 * half;
+  const names = p.nodes.map((n) => n.name);
+  const mk = (tt: number): NodeUI => {
+    const n = newNode('junction', Math.round(a.x + dx * tt), Math.round(a.y + dy * tt), names);
+    n.elevationM = a.elevationM + (b.elevationM - a.elevationM) * tt;
+    names.push(n.name);
+    return n;
+  };
+  const j1 = mk(t1);
+  const j2 = kind === 'junction' ? j1 : mk(t2);
+  const edgeNames = p.edges.map((e) => e.name);
+  const tail: PipeUI = { ...pipe, uid: newUid(), name: uniqueName('Pipe', edgeNames), from: j2.uid, to: pipe.to, fittings: [], lengthM: pipe.lengthM * (1 - t2) };
+  edgeNames.push(tail.name);
+  const head: PipeUI = { ...pipe, to: j1.uid, lengthM: pipe.lengthM * t1 };
+  const middle: EdgeUI[] = [];
+  let selectUid = j1.uid;
+  if (kind === 'valve') {
+    const v = newValve(j1.uid, j2.uid, edgeNames);
+    v.diameterMm = pipe.diameterMm;
+    middle.push(v);
+    selectUid = v.uid;
+  } else if (kind === 'pump') {
+    const pu = newPump(j1.uid, j2.uid, edgeNames);
+    middle.push(pu);
+    selectUid = pu.uid;
+  }
+  return {
+    project: {
+      ...p,
+      nodes: kind === 'junction' ? [...p.nodes, j1] : [...p.nodes, j1, j2],
+      edges: p.edges.flatMap((e) => (e.uid === pipe.uid ? [head, ...middle, tail] : [e])),
+    },
+    selectUid,
+  };
+}
+
 export function defaultPumpCurve() {
   return {
     head: [

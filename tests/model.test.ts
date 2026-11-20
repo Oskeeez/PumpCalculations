@@ -119,3 +119,51 @@ describe('fluids, valves and design alerts in the UI model', () => {
     expect(compute({ ...p, maxVelocityMps: 0 }).alerts).toHaveLength(0);
   });
 });
+
+import { insertOnPipe } from '../src/model';
+
+describe('insert onto a pipe', () => {
+  const pipeA = (p: ReturnType<typeof defaultProject>) => p.edges.find((e) => e.name === 'Pipe A')!;
+
+  it('splits a pipe around a valve, keeps the network solvable and shares the length', () => {
+    const p = defaultProject();
+    const a = pipeA(p);
+    const base = compute(p).result!;
+    const { project, selectUid } = insertOnPipe(p, a.uid, 'valve', 540, 195);
+    expect(project.nodes).toHaveLength(p.nodes.length + 2);
+    expect(project.edges).toHaveLength(p.edges.length + 2);
+    const v = project.edges.find((e) => e.uid === selectUid)!;
+    expect(v.kind).toBe('valve');
+    const head = project.edges.find((e) => e.uid === a.uid)!;
+    const tail = project.edges.find((e) => e.kind === 'pipe' && e.from === v.to)!;
+    expect(head.to).toBe(v.from);
+    expect(tail.to).toBe(a.to);
+    if (head.kind === 'pipe' && tail.kind === 'pipe' && a.kind === 'pipe') {
+      expect(head.lengthM + tail.lengthM).toBeLessThan(a.lengthM);
+      expect(head.lengthM + tail.lengthM).toBeGreaterThan(a.lengthM * 0.5);
+      expect(tail.diameterMm).toBe(a.diameterMm);
+    }
+    const c = compute(project);
+    expect(c.error).toBeUndefined();
+    // a low-loss open valve barely changes the pump flow
+    expect(c.result!.pumps[0].flowM3s).toBeCloseTo(base.pumps[0].flowM3s, 2);
+  });
+
+  it('inserts a junction without changing hydraulics, and rejects non-pipes', () => {
+    const p = defaultProject();
+    const a = pipeA(p);
+    const { project } = insertOnPipe(p, a.uid, 'junction', 500, 200);
+    expect(project.nodes).toHaveLength(p.nodes.length + 1);
+    expect(project.edges).toHaveLength(p.edges.length + 1);
+    expect(compute(project).result!.pumps[0].flowM3s).toBeCloseTo(compute(p).result!.pumps[0].flowM3s, 6);
+    const pump = p.edges.find((e) => e.kind === 'pump')!;
+    expect(() => insertOnPipe(p, pump.uid, 'valve', 0, 0)).toThrow(/pipe/);
+  });
+
+  it('inserts a pump', () => {
+    const p = defaultProject();
+    const { project, selectUid } = insertOnPipe(p, pipeA(p).uid, 'pump', 520, 200);
+    expect(project.edges.find((e) => e.uid === selectUid)?.kind).toBe('pump');
+    expect(compute(project).error).toBeUndefined();
+  });
+});

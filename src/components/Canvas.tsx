@@ -1,6 +1,6 @@
 import { useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { planDistancePx } from '../geometry';
-import type { NodeKind, NodeUI, ProjectUI } from '../model';
+import type { InsertKind, NodeKind, NodeUI, ProjectUI } from '../model';
 import type { SystemResult } from '../solver';
 import { useUnits } from '../units';
 
@@ -24,6 +24,8 @@ interface Props {
   onMoveNode: (uid: string, x: number, y: number) => void;
   onMoveImage: (id: string, x: number, y: number) => void;
   onConnect: (kind: ConnectKind, from: string, to: string) => void;
+  /** Insert a junction, valve or pump into a pipe at the clicked point. */
+  onInsert: (kind: InsertKind, pipeUid: string, x: number, y: number) => void;
   onPending: (uid: string | undefined) => void;
   onCalibPoint: (p: { x: number; y: number }) => void;
 }
@@ -32,15 +34,15 @@ const snap = (v: number) => Math.round(v / GRID) * GRID;
 
 const HINTS: Partial<Record<Tool, string>> = {
   tank: 'Click to place a tank',
-  junction: 'Click to place a junction',
+  junction: 'Click empty space to place a junction, or click a pipe to split it',
   pipe: 'Drag from node to node',
-  valve: 'Drag from node to node',
-  pump: 'Drag from suction node to discharge node',
+  valve: 'Click a pipe to insert a valve, or drag from node to node',
+  pump: 'Click a pipe to insert a pump, or drag from suction node to discharge node',
   scale: 'Click two points a known distance apart',
 };
 
 /** Network canvas. Select mode is the default; tools return to it after one use or a click on the background. */
-export function Canvas({ project, result, selection, tool, pending, calib, onSelect, onTool, onAddNode, onMoveNode, onMoveImage, onConnect, onPending, onCalibPoint }: Props) {
+export function Canvas({ project, result, selection, tool, pending, calib, onSelect, onTool, onAddNode, onMoveNode, onMoveImage, onConnect, onInsert, onPending, onCalibPoint }: Props) {
   const U = useUnits();
   const W = project.canvasW;
   const H = project.canvasH;
@@ -179,7 +181,15 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
             : '';
     const path = `M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`;
     return (
-      <g key={e.uid} className={`edge ${e.kind} ${sel ? 'sel' : ''} ${closed ? 'closed' : ''}`} onPointerDown={(ev) => { if (tool === 'select') { ev.stopPropagation(); onSelect({ type: 'edge', uid: e.uid }); } }}>
+      <g key={e.uid} className={`edge ${e.kind} ${sel ? 'sel' : ''} ${closed ? 'closed' : ''}`} onPointerDown={(ev) => {
+        if (tool === 'select') { ev.stopPropagation(); onSelect({ type: 'edge', uid: e.uid }); }
+        else if (e.kind === 'pipe' && (tool === 'junction' || tool === 'valve' || tool === 'pump')) {
+          ev.stopPropagation();
+          const p = toSvg(ev);
+          onInsert(tool, e.uid, p.x, p.y);
+          onTool('select');
+        }
+      }}>
         <path d={path} className="edge-hit" />
         <path d={path} className="edge-line" />
         {e.kind === 'pump' ? (

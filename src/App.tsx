@@ -16,6 +16,8 @@ import {
   compute,
   defaultProject,
   hydraulicKey,
+  insertOnPipe,
+  type InsertKind,
   newNode,
   newPipe,
   newPump,
@@ -40,7 +42,7 @@ const TOOLS: { id: Exclude<Tool, 'select' | 'scale'>; label: string; title: stri
   { id: 'tank', label: '▭ Tank', title: 'Place a tank' },
   { id: 'junction', label: '● Junction', title: 'Place a junction' },
   { id: 'pipe', label: '— Pipe', title: 'Drag from node to node' },
-  { id: 'valve', label: '⋈ Valve', title: 'Drag from node to node' },
+  { id: 'valve', label: '⋈ Valve', title: 'Click a pipe to insert, or drag from node to node' },
   { id: 'pump', label: '◉ Pump', title: 'Drag from suction node to discharge node' },
 ];
 
@@ -155,6 +157,16 @@ export function App() {
     const e = kind === 'pipe' ? newPipe(from, to, taken) : kind === 'pump' ? newPump(from, to, taken) : newValve(from, to, taken);
     setProject((p) => ({ ...p, edges: [...p.edges, e] }));
     setSelection({ type: 'edge', uid: e.uid });
+  };
+  const insertInto = (kind: InsertKind, pipeUid: string, x: number, y: number) => {
+    try {
+      const r = insertOnPipe(project, pipeUid, kind, x, y);
+      setProject(r.project);
+      setSelection({ type: kind === 'junction' ? 'node' : 'edge', uid: r.selectUid });
+      setMessage(undefined);
+    } catch (err) {
+      setMessage({ kind: 'error', text: err instanceof Error ? err.message : String(err) });
+    }
   };
   const moveNode = (uid: string, x: number, y: number) => setProject((p) => ({ ...p, nodes: p.nodes.map((n) => (n.uid === uid ? { ...n, x, y } : n)) }), `drag:${uid}`);
   const updateNode = (n: NodeUI) => setProject((p) => ({ ...p, nodes: p.nodes.map((q) => (q.uid === n.uid ? n : q)) }), `node:${n.uid}`);
@@ -377,6 +389,7 @@ export function App() {
                 onMoveNode={moveNode}
                 onMoveImage={(id, x, y) => updateImage(id, { x, y })}
                 onConnect={connect}
+                onInsert={insertInto}
                 onPending={setPending}
                 onCalibPoint={(p) => setCalib((c) => (c.length >= 2 ? [p] : [...c, p]))}
               />
