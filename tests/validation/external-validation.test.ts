@@ -10,7 +10,6 @@ describe('Crane TP-410 validation', () => {
   it.todo('Pump + piping system worked example');
 });
 
-describe('EPANET validation', () => {
-  it.todo('Example 1: single reservoir/tank/pump network (compare heads and flows to EPANET output)');
-  it.todo('Looped network with Darcy-Weisbach headloss (EPANET Net1 with D-W)');
+describe('EPANET validation (Net1 done in epanet-net1.test.ts)', () => {
+  it.todo('Net2 / Net3 (pump curves with efficiency, multiple tanks, valves) once those components exist');
 });

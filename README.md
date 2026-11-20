@@ -21,7 +21,7 @@ Build the network on the canvas: place **tanks** (fixed-head boundaries) and **j
 - `src/model.ts` – UI project model (UI units) and conversion to the SI solver model.
 - `src/components/`, `src/App.tsx`, `src/curveChart.ts` – canvas editor, property editors, results tables, pump curves.
 - `src/excel/networkExport.ts` – ExcelJS export (Inputs, Node/Pipe/Pump results, Pump curve) with live formulas and audit residuals.
-- `tests/` – `tests/excel.test.ts` re-evaluates every exported formula with HyperFormula and compares it to the solver; `tests/validation/` holds Crane TP-410 / EPANET placeholders.
+- `tests/` – `tests/excel.test.ts` re-evaluates every exported formula with HyperFormula and compares it to the solver; `tests/validation/epanet-net1.test.ts` runs the EPANET engine (epanet-js) on Net1 and compares; Crane TP-410 is still a placeholder.
 
 ## Notes
 - Pipe elevation change comes from the node elevations. Heads are hydraulic grade z + p_gauge/(rho g).
