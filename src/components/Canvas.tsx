@@ -1,6 +1,7 @@
 import { useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import type { NodeKind, NodeUI, ProjectUI } from '../model';
 import type { SystemResult } from '../solver';
+import { useUnits } from '../units';
 
 export type Tool = 'select' | 'tank' | 'junction' | 'pipe' | 'pump' | 'valve';
 export type Selection = { type: 'node' | 'edge'; uid: string } | null;
@@ -23,10 +24,10 @@ interface Props {
 }
 
 const snap = (v: number) => Math.round(v / GRID) * GRID;
-const f = (v: number, d = 1) => v.toFixed(d);
 
 /** Interactive network canvas: place tanks/junctions, connect with pipes/pumps, drag to rearrange. */
 export function Canvas({ project, result, selection, tool, pending, onSelect, onAddNode, onMoveNode, onConnect, onPending }: Props) {
+  const U = useUnits();
   const svgRef = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<{ uid: string; dx: number; dy: number } | null>(null);
   const nodeById = new Map(project.nodes.map((n) => [n.uid, n]));
@@ -99,17 +100,17 @@ export function Canvas({ project, result, selection, tool, pending, onSelect, on
     const flowing = Math.abs(q) > 1e-9;
     const ang = (Math.atan2(ty, tx) * 180) / Math.PI + (q < 0 ? 180 : 0);
     const sel = selection?.type === 'edge' && selection.uid === e.uid;
-    const closed = e.kind === 'valve' && (!e.open || (pr !== undefined && 'status' in pr && pr.status === 'check-closed'));
-    const label = closed ? (e.kind === 'valve' && !e.open ? 'closed' : 'check closed') : pr && flowing ? `${f(Math.abs(q) * 1000, 2)} L/s` : pr ? '0 L/s' : '';
+    const closed = e.kind === 'valve' && (!e.open || (pr !== undefined && 'status' in pr && (pr.status === 'check-closed' || pr.status === 'closed')));
+    const label = closed ? (e.kind === 'valve' && !e.open ? 'closed' : pr && 'status' in pr && pr.status === 'closed' ? 'closed (reverse blocked)' : 'check closed') : pr && flowing ? `${U.fu('flow', Math.abs(q) * 1000, 2)}` : pr ? `0 ${U.u('flow')}` : '';
     const sub =
       closed
         ? ''
         : pr && e.kind === 'pipe' && 'flow' in pr
-          ? `${f(pr.flow.velocity, 2)} m/s`
+          ? U.fu('velocity', pr.flow.velocity, 2)
           : pr && e.kind === 'pump' && 'headM' in pr
-            ? `H ${f(pr.headM, 1)} m`
+            ? `H ${U.fu('head', pr.headM, 1)}`
             : pr && e.kind === 'valve' && 'pressureDropPa' in pr
-              ? `Δp ${f(pr.pressureDropPa / 1000, 1)} kPa`
+              ? `Δp ${U.fu('pressure', pr.pressureDropPa / 1000, 1)}`
               : '';
     const path = `M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`;
     return (
@@ -155,8 +156,8 @@ export function Canvas({ project, result, selection, tool, pending, onSelect, on
         <text y={n.kind === 'tank' ? 40 : 28} textAnchor="middle" className="t-name">{n.name}</text>
         {nr && (
           <text y={n.kind === 'tank' ? 54 : 41} textAnchor="middle" className="t-res">
-            {n.kind === 'tank' ? `h ${f(nr.headM)} m` : `${f(nr.gaugePressurePa / 1000, 0)} kPa g`}
-            {n.kind === 'junction' && Math.abs(nr.netOutflowM3s) > 1e-9 ? ` · −${f(nr.netOutflowM3s * 1000, 1)} L/s` : ''}
+            {n.kind === 'tank' ? `h ${U.fu('head', nr.headM, 1)}` : `${U.fu('pressure', nr.gaugePressurePa / 1000, 0)} g`}
+            {n.kind === 'junction' && Math.abs(nr.netOutflowM3s) > 1e-9 ? ` · −${U.fu('flow', nr.netOutflowM3s * 1000, 1)}` : ''}
           </text>
         )}
       </g>

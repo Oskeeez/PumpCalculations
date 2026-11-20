@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import { HyperFormula } from 'hyperformula';
 import { describe, expect, it } from 'vitest';
 import { buildNetworkWorkbook, workbookToBuffer } from '../src/excel/networkExport';
+import { compareScenarios, snapshotScenario, speedSweep } from '../src/analysis';
 import { compute, defaultProject } from '../src/model';
 
 /** Re-open the written .xlsx, evaluate every formula independently with HyperFormula and compare to solver values. */
@@ -10,7 +11,15 @@ describe('Network Excel export', () => {
     const project = defaultProject();
     const c = compute(project);
     if (!c.model || !c.result) throw new Error(c.error ?? 'compute failed');
-    const wb = await buildNetworkWorkbook({ model: c.model, result: c.result, npshMarginM: project.npshMarginM, pumpCurves: c.pumpCurves });
+    const pumpUid = project.edges.find((e) => e.kind === 'pump')!.uid;
+    const sweep = speedSweep(project, pumpUid, [0.8, 0.9, 1]);
+    const slow = { ...project, edges: project.edges.map((e) => (e.kind === 'pump' ? { ...e, speedRatio: 0.85 } : e)) };
+    const snap = snapshotScenario(slow, 'Slow pump');
+    const comparison = compareScenarios([
+      { name: 'Current', computed: c },
+      { name: snap.name, computed: compute(snap.project) },
+    ]);
+    const wb = await buildNetworkWorkbook({ model: c.model, result: c.result, npshMarginM: project.npshMarginM, pumpCurves: c.pumpCurves, speedSweep: sweep, comparison });
     const back = new ExcelJS.Workbook();
     await back.xlsx.load(await workbookToBuffer(wb));
     return back;
@@ -18,7 +27,7 @@ describe('Network Excel export', () => {
 
   it('has the expected sheets', async () => {
     const back = await run();
-    expect(back.worksheets.map((w) => w.name)).toEqual(['Inputs', 'Node results', 'Pipe results', 'Valve results', 'Pump results', 'Pump curve']);
+    expect(back.worksheets.map((w) => w.name)).toEqual(['Inputs', 'Node results', 'Pipe results', 'Valve results', 'Pump results', 'Pump curve', 'Speed analysis', 'Scenario comparison']);
   });
 
   it('formulas evaluate (independent engine) to the solver values, and the audit residuals are ~0', async () => {
@@ -58,5 +67,11 @@ describe('Network Excel export', () => {
     }
     expect(Math.abs(get('Pump results', 3, 7) as number)).toBeLessThan(1e-6); // pump curve - head across
     expect(Math.abs(get('Valve results', 3, 10) as number)).toBeLessThan(1e-6); // valve K-drop - head difference
+    for (let i = 0; i < 3; i++) expect(Math.abs(get('Speed analysis', 4 + i, 8) as number)).toBeLessThan(1e-6); // curve check at each speed
+    // scenario deltas are live formulas: current vs slow pump supplies less
+    const sc = hf.getSheetId('Scenario comparison')!;
+    const supplyRow = 5; // first item row of the System section
+    expect(hf.getCellValue({ sheet: sc, row: supplyRow, col: 0 })).toBe('Supplied by tanks');
+    expect(hf.getCellValue({ sheet: sc, row: supplyRow, col: 4 }) as number).toBeLessThan(0);
   });
 });

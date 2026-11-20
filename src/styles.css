@@ -158,3 +158,17 @@ select { font: inherit; padding: 5px 8px; border: 1px solid var(--border); borde
 .fluidbar { margin-bottom: 8px; align-items: flex-end; }
 .header-fluid .field.wide { width: 230px; }
 .fluidbar .fluid-props { flex-basis: 100%; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-top: 16px; }
+.panel > summary { cursor: pointer; font-weight: 600; font-size: 15px; padding: 4px 0; }
+.panel[open] > summary { margin-bottom: 8px; }
+.scn-add { display: flex; gap: 8px; flex-wrap: wrap; }
+.scn-add input { flex: 1; min-width: 220px; }
+.scn-list { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-direction: column; gap: 6px; }
+.scn-list li { display: flex; gap: 6px; }
+.scn-list input { flex: 1; }
+table.cmp td:first-child, table.cmp th:first-child { position: sticky; left: 0; background: var(--panel); }
+table.cmp tr.sec td { background: color-mix(in srgb, var(--accent) 10%, transparent); font-weight: 600; text-align: left; }
+.delta { color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; }
+.seg button.active { background: var(--accent); color: #fff; }

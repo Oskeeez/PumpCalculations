@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import type { PumpCurveData } from '../model';
+import type { Comparison, SpeedSweep } from '../analysis';
 import { G, P_ATM, pumpHead, tankHead, type SystemModel, type SystemResult } from '../solver';
 
 export interface NetworkExportInput {
@@ -9,6 +10,12 @@ export interface NetworkExportInput {
   pumpCurves: PumpCurveData[];
   /** PNG of the pump curve chart, base64 (no data: prefix). ExcelJS cannot author native charts. */
   chartPngBase64?: string;
+  /** Optional pump speed analysis (adds a "Speed analysis" sheet). */
+  speedSweep?: SpeedSweep;
+  /** PNG of the speed-analysis chart. */
+  speedChartPngBase64?: string;
+  /** Optional scenario comparison (adds a "Scenario comparison" sheet). Values are canonical SI-style units. */
+  comparison?: Comparison;
 }
 
 type Cell = number | string | { formula: string; result?: number | string };
@@ -115,13 +122,13 @@ export async function buildNetworkWorkbook(x: NetworkExportInput): Promise<Excel
 
   section('Valves');
   r += 1;
-  header(inp, r, ['Name', 'From', 'To', 'Diameter D [m]', 'Loss type', 'Coefficient (K, Cv or Kv)', 'Check valve', 'Open']);
+  header(inp, r, ['Name', 'From', 'To', 'Diameter D [m]', 'Loss type', 'Coefficient (K, Cv or Kv)', 'Check valve', 'Open', 'Function', 'Set pressure [Pa gauge] / set flow [m3/s]']);
   const valveInRow = new Map<string, number>();
   for (const v of valves) {
     r += 1;
     valveInRow.set(v.id, r);
     const l = v.spec.loss;
-    [v.id, v.from, v.to, v.spec.diameterM, l.type, l.type === 'K' ? l.k : l.type === 'Cv' ? l.cv : l.kv, v.spec.checkValve ? 'yes' : 'no', v.spec.open ? 'yes' : 'no'].forEach((x, i) => (inp.getCell(r, i + 1).value = x));
+    [v.id, v.from, v.to, v.spec.diameterM, l.type, l.type === 'K' ? l.k : l.type === 'Cv' ? l.cv : l.kv, v.spec.checkValve ? 'yes' : 'no', v.spec.open ? 'yes' : 'no', v.spec.control ? v.spec.control.type.toUpperCase() : 'fixed', v.spec.control ? (v.spec.control.type === 'fcv' ? v.spec.control.flowM3s : v.spec.control.setpointPa) : ''].forEach((x, i) => (inp.getCell(r, i + 1).value = x));
   }
 
   section('Pumps (fitted quadratics at rated speed, Q in m3/s)');
@@ -329,6 +336,99 @@ export async function buildNetworkWorkbook(x: NetworkExportInput): Promise<Excel
   if (x.chartPngBase64) {
     const id = wb.addImage({ base64: x.chartPngBase64, extension: 'png' });
     pc.addImage(id, { tl: { col: 3 + pumps.length, row: 2 }, ext: { width: 720, height: 450 } });
+  }
+  // ------------------------------------------------------------ Speed analysis
+  const sw = x.speedSweep;
+  const swPump = sw ? pumps.find((p) => p.id === sw.pump) : undefined;
+  if (sw && swPump) {
+    const sa = wb.addWorksheet('Speed analysis');
+    const ir = pumpInRow.get(swPump.id) as number;
+    const okRows = sw.rows.filter((q) => !q.error && q.flowLps !== undefined);
+    sa.getCell('A1').value = `Pump speed analysis: ${swPump.id}`;
+    sa.getCell('A1').font = { bold: true, size: 14 };
+    sa.getCell('A2').value = 'Each row is a full network solution with the pump at that speed (flow, head, tank supply are solver values). Curves follow the affinity laws H = a0 r^2 + a1 r Q + a2 Q^2; the check column recomputes the head from the pump curve at the solved flow.';
+    sa.getCell('A2').font = NOTE;
+    header(sa, 4, ['Speed ratio r', 'Speed [rpm]', 'Flow Q [L/s]', 'Head H [m]', 'Efficiency', 'Shaft power [kW]', 'NPSH margin [m]', 'Tank supply [L/s]', 'Curve check: H(Q, r) - H [m] (~0)', 'Warnings']);
+    okRows.forEach((q, i) => {
+      const row = 5 + i;
+      sa.getCell(row, 1).value = q.speedRatio;
+      sa.getCell(row, 2).value = q.rpm;
+      sa.getCell(row, 3).value = q.flowLps as number;
+      sa.getCell(row, 4).value = q.headM as number;
+      sa.getCell(row, 5).value = q.efficiency ?? 'n/a';
+      sa.getCell(row, 6).value = q.shaftKw ?? 'n/a';
+      sa.getCell(row, 7).value = q.npshMarginM ?? 'n/a';
+      sa.getCell(row, 8).value = q.systemSupplyLps ?? 'n/a';
+      sa.getCell(row, 9).value = {
+        formula: `Inputs!$D$${ir}*A${row}^2+Inputs!$E$${ir}*A${row}*(C${row}/1000)+Inputs!$F$${ir}*(C${row}/1000)^2-D${row}`,
+        result: pumpHead(swPump.model, (q.flowLps as number) / 1000, q.speedRatio) - (q.headM as number),
+      };
+      sa.getCell(row, 10).value = q.warnings;
+    });
+    const tHdr = 5 + okRows.length + 2;
+    sa.getCell(tHdr - 1, 1).value = 'Pump head curves at each speed (live formulas)';
+    sa.getCell(tHdr - 1, 1).font = BOLD;
+    sa.getCell(tHdr, 1).value = 'Q [L/s]';
+    sa.getCell(tHdr, 1).font = BOLD;
+    okRows.forEach((q, k) => {
+      sa.getCell(tHdr, 2 + k).value = q.speedRatio;
+      sa.getCell(tHdr, 2 + k).numFmt = '0.0%';
+      sa.getCell(tHdr, 2 + k).font = BOLD;
+    });
+    const qEnd = Math.max(1, ...sw.series.map((s) => s.pts[s.pts.length - 1]?.q ?? 0));
+    for (let i = 0; i <= 40; i++) {
+      const row = tHdr + 1 + i;
+      const qL = (qEnd * i) / 40;
+      sa.getCell(row, 1).value = qL;
+      okRows.forEach((q, k) => {
+        const c = colLetter(2 + k);
+        sa.getCell(row, 2 + k).value = {
+          formula: `Inputs!$D$${ir}*${c}$${tHdr}^2+Inputs!$E$${ir}*${c}$${tHdr}*($A${row}/1000)+Inputs!$F$${ir}*($A${row}/1000)^2`,
+          result: pumpHead(swPump.model, qL / 1000, q.speedRatio),
+        };
+      });
+    }
+    for (let c = 1; c <= 10; c++) sa.getColumn(c).width = 22;
+    if (x.speedChartPngBase64) {
+      const id = wb.addImage({ base64: x.speedChartPngBase64, extension: 'png' });
+      sa.addImage(id, { tl: { col: 11, row: 2 }, ext: { width: 720, height: 450 } });
+    }
+  }
+
+  // ------------------------------------------------------------ Scenario comparison
+  const cmp = x.comparison;
+  if (cmp && cmp.columns.length > 1) {
+    const sc = wb.addWorksheet('Scenario comparison');
+    const UNIT: Record<string, string> = { flow: 'L/s', head: 'm', pressure: 'kPa (gauge)', power: 'kW', velocity: 'm/s', text: '', count: '' };
+    sc.getCell('A1').value = 'Scenario comparison';
+    sc.getCell('A1').font = { bold: true, size: 14 };
+    sc.getCell('A2').value = 'Solver values for each saved scenario (column C = the current network). Delta columns are live formulas against the current network.';
+    sc.getCell('A2').font = NOTE;
+    const nC = cmp.columns.length;
+    header(sc, 3, ['Item', 'Unit', ...cmp.columns, ...cmp.columns.slice(1).map((c) => `${c}: change vs current`)]);
+    let row = 3;
+    for (const sec of cmp.sections) {
+      row += 1;
+      sc.getCell(row, 1).value = sec.title;
+      sc.getCell(row, 1).font = BOLD;
+      for (const rw of sec.rows) {
+        row += 1;
+        sc.getCell(row, 1).value = rw.label;
+        sc.getCell(row, 2).value = UNIT[rw.qty] ?? '';
+        rw.values.forEach((v, i) => (sc.getCell(row, 3 + i).value = v === undefined ? '–' : v));
+        if (rw.qty !== 'text') {
+          for (let i = 1; i < nC; i++) {
+            const base = rw.values[0];
+            const v = rw.values[i];
+            if (typeof base === 'number' && typeof v === 'number') {
+              sc.getCell(row, 2 + nC + i).value = { formula: `${colLetter(3 + i)}${row}-C${row}`, result: v - base };
+            }
+          }
+        }
+      }
+    }
+    sc.getColumn(1).width = 40;
+    for (let c = 2; c <= 2 + 2 * nC; c++) sc.getColumn(c).width = 22;
   }
   return wb;
 }

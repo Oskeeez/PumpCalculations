@@ -36,3 +36,9 @@ Build the network on the canvas: place **tanks** (fixed-head boundaries) and **j
 - A pump acts as a check valve: reverse flow is blocked (held to ~1e-5 m3/s).
 - Glycol and seawater vapour pressure is an ideal-solution estimate (water vapour pressure times a Raoult fraction), fine for NPSH screening only.
 - Excel: junction heads, flows and friction factors are solver values; residual columns re-check energy balance across each pipe/valve, the pump curve, the Colebrook equation and node continuity. The chart is an embedded PNG (ExcelJS cannot create native charts).
+
+## Added in this version
+- **US / SI toggle:** display and entry units only (ft, in, gpm, psi, °F, hp ...). The project stores canonical values, so files and results never depend on the choice. Excel sheets are always SI.
+- **Regulating valves:** pressure-reducing (PRV), pressure-sustaining (PSV) and flow-control (FCV), solved by an active-set loop in `solveSystem`. A PRV closes when an unregulated bypass overfeeds its downstream side.
+- **Pump speed analysis:** affinity-law curves at several speeds with the system operating point at each (full network solve per speed).
+- **Scenarios:** save snapshots of the whole network, compare them side by side (deltas against the current network); stored in the project file and exported to Excel.
