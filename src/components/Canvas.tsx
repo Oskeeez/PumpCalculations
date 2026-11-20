@@ -1,6 +1,6 @@
 import { useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { planDistancePx } from '../geometry';
-import type { InsertKind, NodeKind, NodeUI, ProjectUI } from '../model';
+import type { EdgeUI, InsertKind, NodeKind, NodeUI, ProjectUI } from '../model';
 import type { SystemResult } from '../solver';
 import { useUnits } from '../units';
 
@@ -28,6 +28,12 @@ interface Props {
   onInsert: (kind: InsertKind, pipeUid: string, x: number, y: number) => void;
   onPending: (uid: string | undefined) => void;
   onCalibPoint: (p: { x: number; y: number }) => void;
+  /** Draft view: colour added / modified components. */
+  highlight?: Map<string, 'added' | 'modified'>;
+  /** Draft view: components that exist in the parent but not in this draft, drawn as ghosts. */
+  removed?: { nodes: NodeUI[]; edges: EdgeUI[] };
+  /** No editing: selecting only. */
+  readOnly?: boolean;
 }
 
 const snap = (v: number) => Math.round(v / GRID) * GRID;
@@ -43,7 +49,7 @@ const HINTS: Partial<Record<Tool, string>> = {
 };
 
 /** Network canvas. Select mode is the default; tools return to it after one use or a click on the background. */
-export function Canvas({ project, result, selection, tool, pending, calib, onSelect, onTool, onAddNode, onMoveNode, onMoveImage, onConnect, onInsert, onPending, onCalibPoint }: Props) {
+export function Canvas({ project, result, selection, tool, pending, calib, onSelect, onTool, onAddNode, onMoveNode, onMoveImage, onConnect, onInsert, onPending, onCalibPoint, highlight, removed, readOnly }: Props) {
   const U = useUnits();
   const W = project.canvasW;
   const H = project.canvasH;
@@ -66,6 +72,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
   };
 
   const onBackgroundDown = (e: RPointerEvent) => {
+    if (readOnly) return onSelect(null);
     const p = toSvg(e);
     if (tool === 'tank' || tool === 'junction') {
       onAddNode(tool, snap(p.x), snap(p.y));
@@ -82,6 +89,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
 
   const onNodeDown = (e: RPointerEvent, n: NodeUI) => {
     e.stopPropagation();
+    if (readOnly) return onSelect({ type: 'node', uid: n.uid });
     if (tool === 'select') {
       onSelect({ type: 'node', uid: n.uid });
       const p = toSvg(e);
@@ -182,8 +190,8 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
             : '';
     const path = `M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`;
     return (
-      <g key={e.uid} className={`edge ${e.kind} ${sel ? 'sel' : ''} ${closed ? 'closed' : ''}`} onPointerDown={(ev) => {
-        if (tool === 'select') { ev.stopPropagation(); onSelect({ type: 'edge', uid: e.uid }); }
+      <g key={e.uid} className={`edge ${e.kind} ${sel ? 'sel' : ''} ${closed ? 'closed' : ''} ${highlight?.get(e.uid) ? `hl-${highlight.get(e.uid)}` : ''}`} onPointerDown={(ev) => {
+        if (tool === 'select' || readOnly) { ev.stopPropagation(); onSelect({ type: 'edge', uid: e.uid }); }
         else if (e.kind === 'pipe' && (tool === 'junction' || tool === 'valve' || tool === 'orifice' || tool === 'pump')) {
           ev.stopPropagation();
           const p = toSvg(ev);
@@ -220,7 +228,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
   const nodeEls = project.nodes.map((n) => {
     const sel = selection?.type === 'node' && selection.uid === n.uid;
     const nr = result?.nodes.find((x) => x.id === n.name);
-    const cls = `node ${n.kind} ${sel ? 'sel' : ''} ${pending === n.uid || link?.from === n.uid || link?.target === n.uid ? 'pending' : ''} ${nr && nr.warnings.length ? 'warn' : ''}`;
+    const cls = `node ${n.kind} ${highlight?.get(n.uid) ? `hl-${highlight.get(n.uid)}` : ''} ${sel ? 'sel' : ''} ${pending === n.uid || link?.from === n.uid || link?.target === n.uid ? 'pending' : ''} ${nr && nr.warnings.length ? 'warn' : ''}`;
     const fill = Math.max(0.2, Math.min(0.9, n.levelM / (n.levelM + 3)));
     const top = n.kind === 'tank' ? 40 : 28;
     return (
@@ -247,7 +255,23 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     );
   });
 
-  const hint = HINTS[tool];
+  const ghostNodes = new Map([...(removed?.nodes ?? []), ...project.nodes].map((n) => [n.uid, n]));
+  const ghostEls = removed ? (
+    <g className="ghosts">
+      {removed.edges.map((e) => {
+        const a = ghostNodes.get(e.from);
+        const b = ghostNodes.get(e.to);
+        return a && b ? <line key={e.uid} x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="ghost-edge"><title>{`Removed: ${e.name}`}</title></line> : null;
+      })}
+      {removed.nodes.map((n) => (
+        <g key={n.uid} transform={`translate(${n.x} ${n.y})`} className="ghost-node">
+          <circle r={14} />
+          <text y={30} textAnchor="middle" className="t-name">{n.name} (removed)</text>
+        </g>
+      ))}
+    </g>
+  ) : null;
+  const hint = readOnly ? undefined : HINTS[tool];
   const from = link ? nodeById.get(link.from) : undefined;
   return (
     <div className="canvas-wrap">
@@ -286,6 +310,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
           />
         ))}
         {tool === 'scale' && <rect width={W} height={H} fill="transparent" onPointerDown={onBackgroundDown} />}
+        {ghostEls}
         {edgeEls}
         {link && from && (
           <g className="rubber">

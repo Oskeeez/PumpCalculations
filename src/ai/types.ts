@@ -77,8 +77,10 @@ export interface Draft {
   targets: Target[];
   assumptions: Assumption[];
   changes: ChangeNote[];
-  /** 'open' drafts are editable by the AI; 'merged' and 'discarded' are read-only reference. */
-  status: 'open' | 'merged' | 'discarded';
+  /** 'open' drafts are editable by the AI. 'merged' (picked) and 'reference' (siblings of a picked draft) are read-only. */
+  status: 'open' | 'merged' | 'reference' | 'discarded';
+  /** Diff keys already applied to main by a partial accept. */
+  appliedKeys?: string[];
 }
 
 // --------------------------------------------------------------------- diff

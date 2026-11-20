@@ -169,8 +169,12 @@ export const newUid = (): string => `u${++counter}`;
 
 /** Make sure newly created uids cannot collide with those of a loaded project. */
 export function syncUidCounter(p: ProjectUI): void {
-  for (const id of [...p.nodes.map((n) => n.uid), ...p.edges.map((e) => e.uid)]) {
-    const n = Number(id.replace(/^u/, ''));
+  const ids: string[] = [...p.nodes.map((n) => n.uid), ...p.edges.map((e) => e.uid), ...(p.targets ?? []).map((t) => t.id), ...(p.assumptions ?? []).map((a) => a.id)];
+  for (const d of p.drafts ?? []) {
+    ids.push(d.id, d.runId, ...d.project.nodes.map((n) => n.uid), ...d.project.edges.map((e) => e.uid), ...d.base.project.nodes.map((n) => n.uid), ...d.base.project.edges.map((e) => e.uid), ...d.targets.map((t) => t.id), ...d.assumptions.map((a) => a.id));
+  }
+  for (const id of ids) {
+    const n = Number(/(\d+)$/.exec(id)?.[1]);
     if (Number.isFinite(n) && n > counter) counter = n;
   }
 }
@@ -553,7 +557,7 @@ function normalizeProject(p: Partial<ProjectUI> | undefined, depth = 0): Project
         project: hyd(d.project),
         base: { project: hyd(d.base.project), targets: Array.isArray(d.base.targets) ? d.base.targets : [] },
         assumptions: Array.isArray(d.assumptions) ? d.assumptions : [],
-        status: d.status === 'merged' || d.status === 'discarded' ? d.status : 'open',
+        status: d.status === 'merged' || d.status === 'discarded' || d.status === 'reference' ? d.status : 'open',
       };
     });
   }

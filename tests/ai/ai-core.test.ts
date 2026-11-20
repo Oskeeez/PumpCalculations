@@ -206,6 +206,7 @@ describe('tool validation (no LLM)', () => {
     const d = w.drafts[0].project;
     expect(d.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y))).toBe(true);
     expect(Math.hypot(d.nodes[0].x - d.nodes[1].x, d.nodes[0].y - d.nodes[1].y)).toBeGreaterThan(50);
+    expect(d.nodes.find((n) => n.name === 'T')!.x).toBeLessThan(d.nodes.find((n) => n.name === 'U')!.x); // laid out along the flow, tank first
     const s = executeTool(w, 'solve_draft', { draft_id: id });
     expect(s.ok).toBe(true);
     expect((s.data as { solved: boolean }).solved).toBe(true);

@@ -47,6 +47,9 @@ describe('generate from a description (mock LLM)', () => {
     expect(d.assumptions).toHaveLength(1);
     expect(d.targets).toHaveLength(1);
     expect(d.project.nodes.every((n) => Number.isFinite(n.x) && n.x > 0)).toBe(true);
+    const X = (n: string) => d.project.nodes.find((q) => q.name === n)!.x;
+    expect(X('Supply')).toBeLessThan(X('Pump out'));
+    expect(X('Pump out')).toBeLessThan(X('Tap'));
     expect(main.nodes).toHaveLength(0);
     const col = analyse(d.id, d.name, d.rationale, 'open', d.project, d.targets, DEFAULT_CRITERIA);
     expect(col.solved).toBe(true);

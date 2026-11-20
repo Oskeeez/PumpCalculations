@@ -18,9 +18,20 @@ npm run build
 - Pump curves at several speeds (affinity laws), scenario comparison, SI and US units.
 - Save and open as JSON, autosave, undo and redo, Excel export.
 
+## AI design assistant
+Optional. Uses your own Anthropic API key (AI assistant tab → settings; stored in this browser only, sent only to api.anthropic.com). The solver stays the source of truth: the model can only call validated tools, edits go into **drafts** (copies), and every pass/fail is computed by the solver, never by the model.
+- **Targets** (Network tab): required flow, residual pressure window, velocity limits, pump range (% of BEP, runout), NPSH margin. Saved in the project file.
+- **Generate**: describe a system, get a draft with its assumptions; accept all or item by item from the diff (green added, orange changed, pink removed).
+- **Solve with AI**: deterministic diagnosis, then *ideas first* (you pick) or *solve every way* (all variants built as sibling drafts). Drafts tab: one tab per draft plus a comparison (target pass/fail, pump duty vs BEP, head burned across valves/orifices, rough cost, warnings).
+- **Pick** merges a draft into main; siblings stay as read-only reference. **Chat** edits also go to a draft.
+- Caps on tool calls, solver runs, turns and drafts per run; every tool call, solver run and model turn is logged (downloadable JSON).
+- Design criteria (velocity limits, roughness, pump window, orifice limits, cost rates) are editable JSON. The shipped values are generic placeholders, and catalogue pumps are generic curves, not vendor data.
+- Code: `src/ai/` (types, targets, drafts, tools, flows, llm). `LlmProvider` is the swap point for another vendor. Tests mock the model.
+
 ## Layout
 - `src/solver/` solver library, no UI dependencies: node-based Newton-Raphson network solver, network model, valves, regulators, fluids, pumps, friction.
 - `src/model.ts` project model, unit boundary, save and load.
+- `src/ai/` AI design layer (see above).
 - `src/geometry.ts` canvas scale, world coordinates, pipe length from the canvas.
 - `src/scene3d.ts` 3D scene description. `src/components/View3D.tsx` renderer.
 - `src/analysis.ts` speed sweeps and scenario comparison.

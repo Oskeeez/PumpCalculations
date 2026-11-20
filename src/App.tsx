@@ -1,12 +1,20 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { loadCriteria, type DesignCriteria } from './ai/criteria';
+import { mergeDraft } from './ai/drafts';
+import { loadAiSettings, type AiSettings } from './ai/llm';
+import { evaluateTargets } from './ai/targets';
+import type { Draft } from './ai/types';
 import { compareScenarios, snapshotScenario, speedRatios, speedSweep } from './analysis';
 import { Canvas, type ConnectKind, type Selection, type Tool } from './components/Canvas';
+import { AiPanel } from './components/AiPanel';
 import { CanvasPanel } from './components/CanvasPanel';
+import { DraftsView } from './components/DraftsView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { NodeEditor, PipeEditor, PumpEditor, ValveEditor } from './components/Editors';
 import { NumField } from './components/NumField';
 import { Results } from './components/Results';
 import { ScenarioPanel } from './components/ScenarioPanel';
+import { TargetsPanel } from './components/TargetsPanel';
 import { SpeedPanel, type SpeedConfig } from './components/SpeedPanel';
 import { EXPORT_THEME, SCREEN_THEME, SI_AXES, pumpChartSvg, svgToPngBase64, CHART_H, CHART_W } from './curveChart';
 import { calibrate } from './geometry';
@@ -71,9 +79,15 @@ function loadUnits(): UnitSystem {
 }
 
 export function App() {
-  const { state: project, set: setProject, undo, redo, canUndo, canRedo } = useHistory<ProjectUI>(loadInitial);
+  const [boot] = useState(loadInitial);
+  const { state: project, set: setProject, undo, redo, canUndo, canRedo } = useHistory<ProjectUI>(() => ({ ...boot, drafts: undefined }));
+  // AI drafts live outside the undo history (the AI changes them asynchronously) but are saved with the project.
+  const [drafts, setDrafts] = useState<Draft[]>(boot.drafts ?? []);
+  const [aiSettings, setAiSettings] = useState<AiSettings>(loadAiSettings);
+  const [criteria, setCriteria] = useState<DesignCriteria>(loadCriteria);
+  const [draftTab, setDraftTab] = useState('compare');
   const [unitSystem, setUnitSystem] = useState<UnitSystem>(loadUnits);
-  const [view, setView] = useState<'network' | '3d'>('network');
+  const [view, setView] = useState<'network' | '3d' | 'ai' | 'drafts'>('network');
   const [selection, setSelection] = useState<Selection>(null);
   const [tool, setTool] = useState<Tool>('select');
   const [pending, setPending] = useState<string>();
@@ -121,13 +135,13 @@ export function App() {
   useEffect(() => {
     const t = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, serializeProject(project));
+        localStorage.setItem(STORAGE_KEY, serializeProject({ ...project, drafts }));
       } catch {
         /* ignore */
       }
     }, 500);
     return () => clearTimeout(t);
-  }, [project]);
+  }, [project, drafts]);
   useEffect(() => {
     try {
       localStorage.setItem(UNITS_KEY, unitSystem);
@@ -201,7 +215,9 @@ export function App() {
 
   const replaceProject = (p: ProjectUI, text?: string) => {
     syncUidCounter(p);
-    setProject(p);
+    setDrafts(p.drafts ?? []);
+    setDraftTab('compare');
+    setProject({ ...p, drafts: undefined });
     setSelection(null);
     setPending(undefined);
     setCalib([]);
@@ -215,13 +231,44 @@ export function App() {
     const s = scenarios.find((x) => x.id === id);
     if (!s) return;
     const snap = JSON.parse(JSON.stringify(s.project)) as Omit<ProjectUI, 'images' | 'scenarios'>;
-    replaceProject({ ...snap, images: project.images, scenarios: project.scenarios }, `Loaded “${s.name}”.`);
+    replaceProject({ ...snap, images: project.images, scenarios: project.scenarios, targets: project.targets, assumptions: project.assumptions, drafts }, `Loaded “${s.name}”.`);
   };
+  // AI drafts: accept (merge into main), discard
+  const acceptDraft = (id: string, keys: Set<string> | 'all'): string[] => {
+    const d = drafts.find((x) => x.id === id);
+    if (!d || d.status !== 'open') return ['That draft is read-only.'];
+    const res = mergeDraft(project, d, keys);
+    syncUidCounter(res.project);
+    setProject(res.project);
+    const pickedAll = keys === 'all';
+    setDrafts((all) =>
+      all.map((x) => {
+        if (x.id === id) {
+          const applied = [...new Set([...(x.appliedKeys ?? []), ...res.applied])];
+          return { ...x, appliedKeys: applied, status: pickedAll ? 'merged' : x.status };
+        }
+        // siblings of a picked draft stay as read-only reference
+        return pickedAll && x.runId === d.runId && x.status === 'open' ? { ...x, status: 'reference' } : x;
+      }),
+    );
+    setMessage({ kind: 'info', text: `Merged ${pickedAll ? 'all changes' : `${res.applied.length} change(s)`} from “${d.name}” into the main model. Undo reverts the main model.` });
+    return res.notes;
+  };
+  const discardDraft = (id: string) => {
+    setDrafts((all) => all.filter((x) => x.id !== id));
+    setDraftTab('compare');
+  };
+  const targets = project.targets ?? [];
+  const targetStatuses = useMemo(
+    () => evaluateTargets(project, targets, computed),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [computed, project.targets, project.nodes, project.edges],
+  );
   const deleteScenario = (id: string) => setProject((p) => ({ ...p, scenarios: (p.scenarios ?? []).filter((s) => s.id !== id) }));
   const renameScenario = (id: string, name: string) => setProject((p) => ({ ...p, scenarios: (p.scenarios ?? []).map((s) => (s.id === id ? { ...s, name } : s)) }), `scn:${id}`);
 
   const saveFile = () => {
-    const url = URL.createObjectURL(new Blob([serializeProject(project)], { type: 'application/json' }));
+    const url = URL.createObjectURL(new Blob([serializeProject({ ...project, drafts })], { type: 'application/json' }));
     const a = document.createElement('a');
     a.href = url;
     a.download = 'pipe-network.json';
@@ -362,9 +409,29 @@ export function App() {
         <nav className="tabs" aria-label="Page">
           <button className={view === 'network' ? 'active' : ''} onClick={() => setView('network')}>Network</button>
           <button className={view === '3d' ? 'active' : ''} onClick={() => setView('3d')}>3D view</button>
+          <button className={view === 'ai' ? 'active' : ''} onClick={() => setView('ai')}>AI assistant</button>
+          <button className={view === 'drafts' ? 'active' : ''} onClick={() => setView('drafts')}>Drafts ({drafts.filter((d) => d.status !== 'discarded').length})</button>
         </nav>
 
-        {view === '3d' ? (
+        {view === 'ai' ? (
+          <ErrorBoundary title="The AI assistant failed">
+            <AiPanel
+              main={project}
+              drafts={drafts}
+              activeDraftId={draftTab === 'compare' ? undefined : draftTab}
+              settings={aiSettings}
+              onSettings={setAiSettings}
+              criteria={criteria}
+              onCriteria={setCriteria}
+              onDrafts={setDrafts}
+              onShow={(ids) => { setDraftTab(ids.length === 1 ? ids[0] : 'compare'); setView('drafts'); }}
+            />
+          </ErrorBoundary>
+        ) : view === 'drafts' ? (
+          <ErrorBoundary title="The drafts view failed">
+            <DraftsView main={project} drafts={drafts} criteria={criteria} tab={draftTab} onTab={setDraftTab} onAccept={acceptDraft} onDiscard={discardDraft} />
+          </ErrorBoundary>
+        ) : view === '3d' ? (
           <ErrorBoundary title="The 3D view failed">
             <Suspense fallback={<p className="hint">Loading 3D view…</p>}>
               <View3D project={project} computed={computed} />
@@ -406,6 +473,17 @@ export function App() {
                 </aside>
               )}
             </div>
+
+            <details className="panel" open={targets.length > 0}>
+              <summary>Targets ({targets.length}{targets.length ? `, ${targetStatuses.filter((s) => !s.pass).length} failing` : ''})</summary>
+              <TargetsPanel project={project} targets={targets} statuses={targetStatuses} onChange={(t) => setProject((p) => ({ ...p, targets: t }), 'targets')} />
+              {(project.assumptions ?? []).length > 0 && (
+                <>
+                  <h4>Assumptions from AI-built parts ({project.assumptions!.length})</h4>
+                  <ul className="status-list">{project.assumptions!.map((a) => <li key={a.id}><b>{a.category}:</b> {a.text}</li>)}</ul>
+                </>
+              )}
+            </details>
 
             <details className="panel">
               <summary>Scale and images</summary>

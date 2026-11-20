@@ -141,8 +141,13 @@ function placeUnplaced(ws: Workspace, d: Draft, final = false): void {
     if (!progress) break;
   }
   if (final) {
-    let col = 0;
-    for (const n of pending()) put(n, 100 + 170 * (col++ % 6), 100 + 90 * Math.floor(col / 6));
+    // Nodes with no placed neighbour: anchor the first one of each connected group (tanks first), then lay out the rest from it.
+    let row = 0;
+    for (let guard = 0; pending().length && guard < 200; guard++) {
+      const next = pending().find((n) => n.kind === 'tank') ?? pending()[0];
+      put(next, 100, 100 + 120 * row++);
+      placeUnplaced(ws, d, false);
+    }
     const maxX = Math.max(0, ...d.project.nodes.map((n) => n.x));
     const maxY = Math.max(0, ...d.project.nodes.map((n) => n.y));
     d.project.canvasW = Math.max(d.project.canvasW, maxX + 120);
