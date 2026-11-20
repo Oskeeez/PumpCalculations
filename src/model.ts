@@ -16,6 +16,7 @@ import {
   type SysNode,
   type SystemModel,
   type SystemResult,
+  type ValveControl,
   type ValveLoss,
 } from './solver';
 
@@ -62,12 +63,15 @@ export interface PumpUI {
   from: string;
   to: string;
   speedRatio: number;
+  /** Rated speed [rpm], for display of speed ratios. */
+  ratedRpm: number;
   head: { q: number; h: number }[];
   efficiency: { q: number; eta: number }[];
   npshr: { q: number; h: number }[];
 }
 
 export type ValveLossType = ValveLoss['type'];
+export type ValveControlType = 'none' | 'prv' | 'psv' | 'fcv';
 
 export interface ValveUI {
   kind: 'valve';
@@ -81,6 +85,10 @@ export interface ValveUI {
   lossValue: number;
   checkValve: boolean;
   open: boolean;
+  /** Regulation: none, pressure-reducing, pressure-sustaining or flow-control. */
+  controlType: ValveControlType;
+  /** Set pressure [kPa gauge] for PRV / PSV, or set flow [L/s] for FCV. */
+  controlValue: number;
 }
 
 export type EdgeUI = PipeUI | PumpUI | ValveUI;
@@ -102,6 +110,15 @@ export interface ProjectUI {
   maxVelocityMps: number;
   nodes: NodeUI[];
   edges: EdgeUI[];
+  /** Saved what-if snapshots of the network (see scenarios.ts). */
+  scenarios?: Scenario[];
+}
+
+/** A named snapshot of the hydraulic model. */
+export interface Scenario {
+  id: string;
+  name: string;
+  project: Omit<ProjectUI, 'scenarios'>;
 }
 
 let counter = 100;
@@ -142,7 +159,7 @@ export function newPipe(from: string, to: string, taken: string[]): PipeUI {
 }
 
 export function newValve(from: string, to: string, taken: string[]): ValveUI {
-  return { kind: 'valve', uid: newUid(), name: uniqueName('Valve', taken), from, to, diameterMm: 102.26, lossType: 'K', lossValue: 0.15, checkValve: false, open: true };
+  return { kind: 'valve', uid: newUid(), name: uniqueName('Valve', taken), from, to, diameterMm: 102.26, lossType: 'K', lossValue: 0.15, checkValve: false, open: true, controlType: 'none', controlValue: 200 };
 }
 
 export function defaultPumpCurve() {
@@ -168,7 +185,7 @@ export function defaultPumpCurve() {
 }
 
 export function newPump(from: string, to: string, taken: string[]): PumpUI {
-  return { kind: 'pump', uid: newUid(), name: uniqueName('Pump', taken), from, to, speedRatio: 1, ...defaultPumpCurve() };
+  return { kind: 'pump', uid: newUid(), name: uniqueName('Pump', taken), from, to, speedRatio: 1, ratedRpm: 1450, ...defaultPumpCurve() };
 }
 
 export function blankProject(): ProjectUI {
@@ -191,8 +208,8 @@ export function defaultProject(): ProjectUI {
   const pipe = (name: string, a: NodeUI, b: NodeUI, lengthM: number, diameterMm: number, k: number[] = []): PipeUI => ({
     kind: 'pipe', uid: newUid(), name, from: a.uid, to: b.uid, lengthM, diameterMm, roughnessMm: 0.05, fittings: k.map((v) => ({ name: 'Fitting', k: v })),
   });
-  const pump: PumpUI = { kind: 'pump', uid: newUid(), name: 'Pump 1', from: suction.uid, to: j1.uid, speedRatio: 1, ...defaultPumpCurve() };
-  const valve: ValveUI = { kind: 'valve', uid: newUid(), name: 'Throttle valve', from: vb.uid, to: j3.uid, diameterMm: 100, lossType: 'Cv', lossValue: 250, checkValve: false, open: true };
+  const pump: PumpUI = { kind: 'pump', uid: newUid(), name: 'Pump 1', from: suction.uid, to: j1.uid, speedRatio: 1, ratedRpm: 1450, ...defaultPumpCurve() };
+  const valve: ValveUI = { kind: 'valve', uid: newUid(), name: 'Throttle valve', from: vb.uid, to: j3.uid, diameterMm: 100, lossType: 'Cv', lossValue: 250, checkValve: false, open: true, controlType: 'none', controlValue: 200 };
   return {
     fluid: defaultFluid(),
     temperatureC: 20,
@@ -250,7 +267,15 @@ export function toSystemModel(p: ProjectUI): SystemModel {
       if (!(e.diameterMm > 0)) throw new Error(`${e.name}: diameter must be > 0.`);
       if (e.lossType === 'K' ? !(e.lossValue >= 0) : !(e.lossValue > 0)) throw new Error(`${e.name}: ${e.lossType} must be ${e.lossType === 'K' ? '≥ 0' : '> 0'}.`);
       const loss: ValveLoss = e.lossType === 'K' ? { type: 'K', k: e.lossValue } : e.lossType === 'Cv' ? { type: 'Cv', cv: e.lossValue } : { type: 'Kv', kv: e.lossValue };
-      return { kind: 'valve', id: e.name, from, to, spec: { diameterM: e.diameterMm / 1000, loss, checkValve: e.checkValve, open: e.open } };
+      let control: ValveControl | undefined;
+      if (e.controlType === 'prv' || e.controlType === 'psv') {
+        if (!(e.controlValue >= 0)) throw new Error(`${e.name}: set pressure must be ≥ 0.`);
+        control = { type: e.controlType, setpointPa: e.controlValue * 1000 };
+      } else if (e.controlType === 'fcv') {
+        if (!(e.controlValue > 0)) throw new Error(`${e.name}: set flow must be > 0.`);
+        control = { type: 'fcv', flowM3s: e.controlValue / 1000 };
+      }
+      return { kind: 'valve', id: e.name, from, to, spec: { diameterM: e.diameterMm / 1000, loss, checkValve: e.checkValve, open: e.open, control } };
     }
     if (!(e.speedRatio > 0)) throw new Error(`${e.name}: speed ratio must be > 0.`);
     if (e.head.length < 2 || new Set(e.head.map((x) => x.q)).size < 2) throw new Error(`${e.name}: head curve needs at least 2 points with different flows.`);
@@ -333,18 +358,8 @@ export function serializeProject(p: ProjectUI): string {
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isStr = (v: unknown): v is string => typeof v === 'string';
 
-/** Parse and validate a saved project. Throws Error with a readable message. */
-export function parseProject(text: string): ProjectUI {
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error('This file is not valid JSON.');
-  }
-  const root = data as { format?: unknown; version?: unknown; project?: unknown };
-  if (!root || root.format !== FORMAT) throw new Error('This is not a pipe network project file.');
-  if (root.version !== VERSION) throw new Error(`Unsupported project version ${String(root.version)}.`);
-  const p = root.project as Partial<ProjectUI> | undefined;
+/** Validate one project (or scenario snapshot) and fill defaults for fields added in later versions. */
+function normalizeProject(p: Partial<ProjectUI> | undefined, depth = 0): ProjectUI {
   if (!p || !Array.isArray(p.nodes) || !Array.isArray(p.edges) || !p.fluid) throw new Error('The project file is missing nodes, edges or fluid.');
   for (const n of p.nodes) {
     if (!n || !isStr(n.uid) || !isStr(n.name) || (n.kind !== 'tank' && n.kind !== 'junction') || ![n.x, n.y, n.elevationM, n.levelM, n.pressureKPa, n.demandLps].every(isNum)) {
@@ -363,8 +378,35 @@ export function parseProject(text: string): ProjectUI {
     npshMarginM: p.npshMarginM,
     maxVelocityMps: isNum(p.maxVelocityMps) ? p.maxVelocityMps : 3,
     nodes: p.nodes as NodeUI[],
-    edges: p.edges as EdgeUI[],
+    edges: (p.edges as EdgeUI[]).map((e) =>
+      e.kind === 'valve'
+        ? { ...e, controlType: e.controlType ?? 'none', controlValue: isNum(e.controlValue) ? e.controlValue : 200 }
+        : e.kind === 'pump'
+          ? { ...e, ratedRpm: isNum(e.ratedRpm) ? e.ratedRpm : 1450 }
+          : e,
+    ),
   };
+  if (depth === 0 && Array.isArray(p.scenarios)) {
+    project.scenarios = p.scenarios.map((s) => {
+      if (!s || !isStr(s.id) || !isStr(s.name)) throw new Error('A saved scenario in the project file is malformed.');
+      return { id: s.id, name: s.name, project: normalizeProject(s.project as Partial<ProjectUI>, 1) as Scenario['project'] };
+    });
+  }
+  return project;
+}
+
+/** Parse and validate a saved project. Throws Error with a readable message. */
+export function parseProject(text: string): ProjectUI {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error('This file is not valid JSON.');
+  }
+  const root = data as { format?: unknown; version?: unknown; project?: unknown };
+  if (!root || root.format !== FORMAT) throw new Error('This is not a pipe network project file.');
+  if (root.version !== VERSION) throw new Error(`Unsupported project version ${String(root.version)}.`);
+  const project = normalizeProject(root.project as Partial<ProjectUI> | undefined);
   syncUidCounter(project);
   return project;
 }

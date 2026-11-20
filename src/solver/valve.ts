@@ -12,6 +12,17 @@ import { pipeArea } from './pipe';
  */
 export type ValveLoss = { type: 'K'; k: number } | { type: 'Cv'; cv: number } | { type: 'Kv'; kv: number };
 
+/**
+ * Optional regulation. `loss` then describes the valve fully open.
+ *  - prv: pressure-reducing; holds the downstream (`to`) node at a gauge pressure when upstream pressure is higher
+ *  - psv: pressure-sustaining; holds the upstream (`from`) node at a gauge pressure by throttling
+ *  - fcv: flow-control; limits the flow to a set value when the network would otherwise pass more
+ * Regulators block reverse flow. They are handled by an active-set loop in `solveSystem`.
+ */
+export type ValveControl =
+  | { type: 'prv' | 'psv'; setpointPa: number }
+  | { type: 'fcv'; flowM3s: number };
+
 export interface ValveSpec {
   /** Valve / line diameter [m] (used for velocity and for K-based loss). */
   diameterM: number;
@@ -19,6 +30,7 @@ export interface ValveSpec {
   checkValve: boolean;
   /** false = closed: no flow, removed from the network. */
   open: boolean;
+  control?: ValveControl;
 }
 
 const RHO_REF = 999; // kg/m3 water reference used by the Cv/Kv definitions
