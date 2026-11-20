@@ -35,7 +35,7 @@ export function SpeedPanel({ pumps, config, onConfig, sweep }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sweep, U.system],
   );
-  if (pumps.length === 0) return <p className="hint">Add a pump to the network to analyse it at several speeds.</p>;
+  if (pumps.length === 0) return <p className="hint">No pumps in the network.</p>;
   const num = (v: number | undefined, d = 1) => (v === undefined || !Number.isFinite(v) ? '–' : v.toFixed(d));
   return (
     <div>
@@ -50,9 +50,6 @@ export function SpeedPanel({ pumps, config, onConfig, sweep }: Props) {
         <NumField label="To" unit="% of rated speed" value={config.maxPct} onChange={(v) => onConfig({ ...config, maxPct: v })} />
         <NumField label="Step" unit="%" value={config.stepPct} onChange={(v) => onConfig({ ...config, stepPct: v })} />
       </div>
-      <p className="hint">
-        Curves at other speeds follow the affinity laws (Q ∝ N, H ∝ N², P ∝ N³; efficiency at the homologous point). Each operating point is a full network solution with the pump at that speed.
-      </p>
       {sweep && sweep.rows.length === 0 && <div className="banner warn">Enter a valid speed range (from ≤ to, step &gt; 0).</div>}
       {sweep && sweep.rows.length > 0 && (
         <div className="below">

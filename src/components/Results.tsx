@@ -14,7 +14,7 @@ export function Results({ computed, onSelectName }: { computed: Computed; onSele
   return (
     <div className="results">
       <div className={`banner ${r.converged ? 'ok' : 'error'}`}>
-        {r.converged ? `Solved: ${r.message.toLowerCase()} (max node imbalance ${r.residualM3s.toExponential(1)} m³/s).` : `Not converged: ${r.message}`}
+        {r.converged ? `Solved in ${r.iterations} iterations` : `Not converged: ${r.message}`}
       </div>
       <div className="kpis">
         <div><span>Supplied by tanks</span><b>{U.f('flow', Lps(tankSupply))}</b> {U.u('flow')}</div>
@@ -22,10 +22,10 @@ export function Results({ computed, onSelectName }: { computed: Computed; onSele
         <div><span>Pipes / valves / pumps</span><b>{r.pipes.length}</b> / <b>{r.valves.length}</b> / <b>{r.pumps.length}</b></div>
       </div>
       {computed.alerts.map((w, i) => (
-        <div key={`a${i}`} className="banner warn">⚑ Design alert: {w}</div>
+        <div key={`a${i}`} className="banner warn">Alert: {w}</div>
       ))}
       {r.warnings.map((w, i) => (
-        <div key={i} className="banner warn">⚠ {w}</div>
+        <div key={i} className="banner warn">{w}</div>
       ))}
 
       <h3>Nodes</h3>

@@ -36,12 +36,9 @@ export function ScenarioPanel({ scenarios, comparison, onSave, onLoad, onDelete,
   return (
     <div>
       <div className="scn-add">
-        <input value={name} placeholder="Scenario name, e.g. 80 % speed, valve throttled" onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (onSave(name), setName(''))} />
-        <button className="primary" onClick={() => { onSave(name); setName(''); }}>Save current network as scenario</button>
+        <input value={name} placeholder="Scenario name" onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (onSave(name), setName(''))} />
+        <button className="primary" onClick={() => { onSave(name); setName(''); }}>Save current network</button>
       </div>
-      <p className="hint">
-        A scenario is a snapshot of the whole network (fluid, pipes, valves, pump speeds, demands…). Change the network, save another, and compare. Loading a scenario replaces the current network (Undo brings it back). Scenarios are saved in the project file.
-      </p>
       {scenarios.length > 0 && (
         <ul className="scn-list">
           {scenarios.map((s) => (
@@ -54,7 +51,7 @@ export function ScenarioPanel({ scenarios, comparison, onSave, onLoad, onDelete,
         </ul>
       )}
       {scenarios.length === 0 ? (
-        <p className="hint">No saved scenarios yet.</p>
+        <p className="hint">No saved scenarios.</p>
       ) : (
         <>
           {comparison.errors.map((e, i) => (e ? <div key={i} className="banner error">{comparison.columns[i]}: {e}</div> : null))}
@@ -86,7 +83,6 @@ export function ScenarioPanel({ scenarios, comparison, onSave, onLoad, onDelete,
               </tbody>
             </table>
           </div>
-          <p className="hint">Differences in brackets are relative to the current network (first column).</p>
         </>
       )}
     </div>

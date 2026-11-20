@@ -3,6 +3,7 @@
  * UI units: flow L/s, diameter & roughness mm, pressure kPa (absolute), temperature degC, efficiency %,
  * viscosity mPa.s.
  */
+import { DEFAULT_CANVAS, DEFAULT_SCALE_M_PER_PX, lengthFromCanvas } from './geometry';
 import {
   NetworkError,
   P_ATM,
@@ -50,7 +51,10 @@ export interface PipeUI {
   name: string;
   from: string;
   to: string;
+  /** Length [m]; used when lengthMode is 'manual'. */
   lengthM: number;
+  /** 'canvas': straight-line 3D distance between the end nodes (canvas scale + elevations). */
+  lengthMode: 'manual' | 'canvas';
   diameterMm: number;
   roughnessMm: number;
   fittings: FittingUI[];
@@ -110,15 +114,40 @@ export interface ProjectUI {
   maxVelocityMps: number;
   nodes: NodeUI[];
   edges: EdgeUI[];
-  /** Saved what-if snapshots of the network (see scenarios.ts). */
+  /** Canvas scale [m per pixel]. */
+  scaleMPerPx: number;
+  /** Canvas size [px]. */
+  canvasW: number;
+  canvasH: number;
+  /** Image layers drawn under the network. */
+  images: ImageLayer[];
+  /** Saved what-if snapshots of the network (see analysis.ts). */
   scenarios?: Scenario[];
 }
 
-/** A named snapshot of the hydraulic model. */
+export interface ImageLayer {
+  id: string;
+  name: string;
+  /** Data URL (downscaled on import). */
+  dataUrl: string;
+  /** Top-left corner and size on the canvas [px]. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** 0..1 */
+  opacity: number;
+  locked: boolean;
+}
+
+/** Everything the hydraulic calculation needs (no images, no saved scenarios). */
+export type HydraulicProject = Omit<ProjectUI, 'scenarios' | 'images'>;
+
+/** A named snapshot of the hydraulic model (images are not part of a snapshot). */
 export interface Scenario {
   id: string;
   name: string;
-  project: Omit<ProjectUI, 'scenarios'>;
+  project: HydraulicProject;
 }
 
 let counter = 100;
@@ -155,7 +184,7 @@ export function newNode(kind: NodeKind, x: number, y: number, taken: string[]): 
 }
 
 export function newPipe(from: string, to: string, taken: string[]): PipeUI {
-  return { kind: 'pipe', uid: newUid(), name: uniqueName('Pipe', taken), from, to, lengthM: 100, diameterMm: 102.26, roughnessMm: 0.046, fittings: [] };
+  return { kind: 'pipe', uid: newUid(), name: uniqueName('Pipe', taken), from, to, lengthM: 100, lengthMode: 'canvas', diameterMm: 102.26, roughnessMm: 0.046, fittings: [] };
 }
 
 export function newValve(from: string, to: string, taken: string[]): ValveUI {
@@ -189,7 +218,7 @@ export function newPump(from: string, to: string, taken: string[]): PumpUI {
 }
 
 export function blankProject(): ProjectUI {
-  return { fluid: defaultFluid(), temperatureC: 20, npshMarginM: 0.5, maxVelocityMps: 3, nodes: [], edges: [] };
+  return { fluid: defaultFluid(), temperatureC: 20, npshMarginM: 0.5, maxVelocityMps: 3, nodes: [], edges: [], scaleMPerPx: DEFAULT_SCALE_M_PER_PX, canvasW: DEFAULT_CANVAS.w, canvasH: DEFAULT_CANVAS.h, images: [] };
 }
 
 /** Example: tank -> pump -> looped distribution with a throttling valve and demands -> two elevated tanks. */
@@ -206,7 +235,7 @@ export function defaultProject(): ProjectUI {
   const tb = node('tank', 'Tank B', 860, 130, 20);
   const tc = node('tank', 'Tank C', 860, 390, 12, { levelM: 2 });
   const pipe = (name: string, a: NodeUI, b: NodeUI, lengthM: number, diameterMm: number, k: number[] = []): PipeUI => ({
-    kind: 'pipe', uid: newUid(), name, from: a.uid, to: b.uid, lengthM, diameterMm, roughnessMm: 0.05, fittings: k.map((v) => ({ name: 'Fitting', k: v })),
+    kind: 'pipe', uid: newUid(), name, from: a.uid, to: b.uid, lengthM, lengthMode: 'manual', diameterMm, roughnessMm: 0.05, fittings: k.map((v) => ({ name: 'Fitting', k: v })),
   });
   const pump: PumpUI = { kind: 'pump', uid: newUid(), name: 'Pump 1', from: suction.uid, to: j1.uid, speedRatio: 1, ratedRpm: 1450, ...defaultPumpCurve() };
   const valve: ValveUI = { kind: 'valve', uid: newUid(), name: 'Throttle valve', from: vb.uid, to: j3.uid, diameterMm: 100, lossType: 'Cv', lossValue: 250, checkValve: false, open: true, controlType: 'none', controlValue: 200 };
@@ -215,6 +244,10 @@ export function defaultProject(): ProjectUI {
     temperatureC: 20,
     npshMarginM: 0.5,
     maxVelocityMps: 3,
+    scaleMPerPx: DEFAULT_SCALE_M_PER_PX,
+    canvasW: DEFAULT_CANVAS.w,
+    canvasH: DEFAULT_CANVAS.h,
+    images: [],
     nodes: [supply, suction, j1, vb, j2, j3, tb, tc],
     edges: [
       pipe('Suction pipe', supply, suction, 8, 150, [0.5]),
@@ -229,8 +262,17 @@ export function defaultProject(): ProjectUI {
   };
 }
 
+/** Pipe length [m]: the typed value, or the 3D distance between its end nodes on the canvas. */
+export function pipeLengthM(p: Pick<ProjectUI, 'nodes' | 'scaleMPerPx'>, e: PipeUI): number {
+  if (e.lengthMode !== 'canvas') return e.lengthM;
+  const a = p.nodes.find((n) => n.uid === e.from);
+  const b = p.nodes.find((n) => n.uid === e.to);
+  return a && b ? lengthFromCanvas(a, b, p.scaleMPerPx) : e.lengthM;
+}
+
 /** Convert UI units to the SI solver model. Throws Error with a readable message if invalid. */
-export function toSystemModel(p: ProjectUI): SystemModel {
+export function toSystemModel(p: HydraulicProject): SystemModel {
+  if (!(p.scaleMPerPx > 0)) throw new Error('Canvas scale must be greater than 0.');
   let fluid;
   try {
     fluid = fluidAt(p.fluid.id, p.temperatureC, {
@@ -255,12 +297,13 @@ export function toSystemModel(p: ProjectUI): SystemModel {
     if (from === undefined || to === undefined) throw new Error(`${e.name} is connected to a missing node.`);
     if (e.kind === 'pipe') {
       if (!(e.diameterMm > 0)) throw new Error(`${e.name}: diameter must be > 0.`);
-      if (!(e.lengthM >= 0)) throw new Error(`${e.name}: length must be ≥ 0.`);
+      const length = pipeLengthM(p, e);
+      if (!(length >= 0)) throw new Error(`${e.name}: length must be ≥ 0.`);
       if (!(e.roughnessMm >= 0)) throw new Error(`${e.name}: roughness must be ≥ 0.`);
       if (e.fittings.some((f) => !(f.k >= 0))) throw new Error(`${e.name}: fitting K values must be ≥ 0.`);
       return {
         kind: 'pipe', id: e.name, from, to,
-        spec: { lengthM: e.lengthM, innerDiameterM: e.diameterMm / 1000, roughnessM: e.roughnessMm / 1000, elevationChangeM: 0, fittingsK: e.fittings.map((f) => f.k) },
+        spec: { lengthM: length, innerDiameterM: e.diameterMm / 1000, roughnessM: e.roughnessMm / 1000, elevationChangeM: 0, fittingsK: e.fittings.map((f) => f.k) },
       };
     }
     if (e.kind === 'valve') {
@@ -307,7 +350,7 @@ export interface Computed {
   error?: string;
 }
 
-export function compute(p: ProjectUI): Computed {
+export function compute(p: HydraulicProject): Computed {
   try {
     const model = toSystemModel(p);
     const result = solveSystem(model, { npshMarginM: p.npshMarginM });
@@ -335,14 +378,19 @@ export function compute(p: ProjectUI): Computed {
   }
 }
 
-/** Key that changes only when something hydraulic changes (not when a node is dragged). */
-export function hydraulicKey(p: ProjectUI): string {
+/**
+ * Key that changes only when something hydraulic changes. Node positions count only while a pipe takes its
+ * length from the canvas, so dragging nodes does not trigger a re-solve otherwise.
+ */
+export function hydraulicKey(p: HydraulicProject): string {
+  const usesCanvas = p.edges.some((e) => e.kind === 'pipe' && e.lengthMode === 'canvas');
   return JSON.stringify([
     p.fluid,
     p.temperatureC,
     p.npshMarginM,
     p.maxVelocityMps,
-    p.nodes.map(({ x: _x, y: _y, ...rest }) => rest),
+    usesCanvas ? p.scaleMPerPx : 0,
+    p.nodes.map(({ x, y, ...rest }) => (usesCanvas ? { x, y, ...rest } : rest)),
     p.edges,
   ]);
 }
@@ -383,13 +431,25 @@ function normalizeProject(p: Partial<ProjectUI> | undefined, depth = 0): Project
         ? { ...e, controlType: e.controlType ?? 'none', controlValue: isNum(e.controlValue) ? e.controlValue : 200 }
         : e.kind === 'pump'
           ? { ...e, ratedRpm: isNum(e.ratedRpm) ? e.ratedRpm : 1450 }
-          : e,
+          : { ...e, lengthMode: e.lengthMode === 'canvas' ? 'canvas' : 'manual' },
     ),
+    scaleMPerPx: isNum(p.scaleMPerPx) && p.scaleMPerPx > 0 ? p.scaleMPerPx : DEFAULT_SCALE_M_PER_PX,
+    canvasW: isNum(p.canvasW) && p.canvasW > 0 ? p.canvasW : DEFAULT_CANVAS.w,
+    canvasH: isNum(p.canvasH) && p.canvasH > 0 ? p.canvasH : DEFAULT_CANVAS.h,
+    images: [],
   };
+  if (p.images !== undefined) {
+    if (!Array.isArray(p.images)) throw new Error('The images in the project file are malformed.');
+    project.images = p.images.map((im) => {
+      if (!im || !isStr(im.id) || !isStr(im.name) || !isStr(im.dataUrl) || ![im.x, im.y, im.width, im.height, im.opacity].every(isNum)) throw new Error('An image in the project file is malformed.');
+      return { ...im, locked: im.locked === true };
+    });
+  }
   if (depth === 0 && Array.isArray(p.scenarios)) {
     project.scenarios = p.scenarios.map((s) => {
       if (!s || !isStr(s.id) || !isStr(s.name)) throw new Error('A saved scenario in the project file is malformed.');
-      return { id: s.id, name: s.name, project: normalizeProject(s.project as Partial<ProjectUI>, 1) as Scenario['project'] };
+      const { scenarios: _drop, images: _images, ...rest } = normalizeProject(s.project as Partial<ProjectUI>, 1);
+      return { id: s.id, name: s.name, project: rest };
     });
   }
   return project;
