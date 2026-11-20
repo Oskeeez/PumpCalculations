@@ -21,6 +21,7 @@ import {
   newNode,
   newPipe,
   newPump,
+  newOrifice,
   newValve,
   parseProject,
   pipeLengthM,
@@ -31,6 +32,7 @@ import {
   type ImageLayer,
   type NodeKind,
   type NodeUI,
+  type PipeUI,
   type ProjectUI,
 } from './model';
 import { FLUID_LIBRARY, fluidInfo } from './solver';
@@ -43,6 +45,7 @@ const TOOLS: { id: Exclude<Tool, 'select' | 'scale'>; label: string; title: stri
   { id: 'junction', label: '● Junction', title: 'Place a junction' },
   { id: 'pipe', label: '— Pipe', title: 'Drag from node to node' },
   { id: 'valve', label: '⋈ Valve', title: 'Click a pipe to insert, or drag from node to node' },
+  { id: 'orifice', label: '⫴ Orifice', title: 'Click a pipe to insert an orifice plate, or drag from node to node' },
   { id: 'pump', label: '◉ Pump', title: 'Drag from suction node to discharge node' },
 ];
 
@@ -152,9 +155,10 @@ export function App() {
     setProject((p) => ({ ...p, nodes: [...p.nodes, n] }));
     setSelection({ type: 'node', uid: n.uid });
   };
+  const p0Diameter = (nodeUid: string) => (project.edges.find((e) => e.kind === 'pipe' && (e.from === nodeUid || e.to === nodeUid)) as PipeUI | undefined)?.diameterMm ?? 102.26;
   const connect = (kind: ConnectKind, from: string, to: string) => {
     const taken = project.edges.map((e) => e.name);
-    const e = kind === 'pipe' ? newPipe(from, to, taken) : kind === 'pump' ? newPump(from, to, taken) : newValve(from, to, taken);
+    const e = kind === 'pipe' ? newPipe(from, to, taken) : kind === 'pump' ? newPump(from, to, taken) : kind === 'orifice' ? newOrifice(from, to, taken, p0Diameter(from)) : newValve(from, to, taken);
     setProject((p) => ({ ...p, edges: [...p.edges, e] }));
     setSelection({ type: 'edge', uid: e.uid });
   };

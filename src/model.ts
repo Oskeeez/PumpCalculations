@@ -6,6 +6,8 @@
 import { DEFAULT_CANVAS, DEFAULT_SCALE_M_PER_PX, lengthFromCanvas } from './geometry';
 import {
   NetworkError,
+  ORIFICE_CD_DEFAULT,
+  orificeKPermanent,
   P_ATM,
   fitPump,
   fluidAt,
@@ -74,7 +76,8 @@ export interface PumpUI {
   npshr: { q: number; h: number }[];
 }
 
-export type ValveLossType = ValveLoss['type'];
+/** 'orifice': lossValue is the bore diameter [mm]; K is derived from the bore/diameter ratio and orificeCd. */
+export type ValveLossType = ValveLoss['type'] | 'orifice';
 export type ValveControlType = 'none' | 'prv' | 'psv' | 'fcv';
 
 export interface ValveUI {
@@ -87,6 +90,8 @@ export interface ValveUI {
   lossType: ValveLossType;
   /** K, Cv or Kv according to lossType. */
   lossValue: number;
+  /** Discharge coefficient for lossType 'orifice' (default 0.61). */
+  orificeCd?: number;
   checkValve: boolean;
   open: boolean;
   /** Regulation: none, pressure-reducing, pressure-sustaining or flow-control. */
@@ -191,7 +196,7 @@ export function newValve(from: string, to: string, taken: string[]): ValveUI {
   return { kind: 'valve', uid: newUid(), name: uniqueName('Valve', taken), from, to, diameterMm: 102.26, lossType: 'K', lossValue: 0.15, checkValve: false, open: true, controlType: 'none', controlValue: 200 };
 }
 
-export type InsertKind = 'junction' | 'valve' | 'pump';
+export type InsertKind = 'junction' | 'valve' | 'orifice' | 'pump';
 
 /**
  * Insert a junction, valve or pump into an existing pipe at the point on the pipe closest to (x, y).
@@ -227,8 +232,8 @@ export function insertOnPipe(p: ProjectUI, pipeUid: string, kind: InsertKind, x:
   const head: PipeUI = { ...pipe, to: j1.uid, lengthM: pipe.lengthM * t1 };
   const middle: EdgeUI[] = [];
   let selectUid = j1.uid;
-  if (kind === 'valve') {
-    const v = newValve(j1.uid, j2.uid, edgeNames);
+  if (kind === 'valve' || kind === 'orifice') {
+    const v = kind === 'orifice' ? newOrifice(j1.uid, j2.uid, edgeNames, pipe.diameterMm) : newValve(j1.uid, j2.uid, edgeNames);
     v.diameterMm = pipe.diameterMm;
     middle.push(v);
     selectUid = v.uid;
@@ -245,6 +250,10 @@ export function insertOnPipe(p: ProjectUI, pipeUid: string, kind: InsertKind, x:
     },
     selectUid,
   };
+}
+
+export function newOrifice(from: string, to: string, taken: string[], diameterMm = 102.26): ValveUI {
+  return { kind: 'valve', uid: newUid(), name: uniqueName('Orifice', taken), from, to, diameterMm, lossType: 'orifice', lossValue: Math.round(diameterMm * 5) / 10, orificeCd: ORIFICE_CD_DEFAULT, checkValve: false, open: true, controlType: 'none', controlValue: 200 };
 }
 
 export function defaultPumpCurve() {
@@ -364,8 +373,18 @@ export function toSystemModel(p: HydraulicProject): SystemModel {
     }
     if (e.kind === 'valve') {
       if (!(e.diameterMm > 0)) throw new Error(`${e.name}: diameter must be > 0.`);
-      if (e.lossType === 'K' ? !(e.lossValue >= 0) : !(e.lossValue > 0)) throw new Error(`${e.name}: ${e.lossType} must be ${e.lossType === 'K' ? '≥ 0' : '> 0'}.`);
-      const loss: ValveLoss = e.lossType === 'K' ? { type: 'K', k: e.lossValue } : e.lossType === 'Cv' ? { type: 'Cv', cv: e.lossValue } : { type: 'Kv', kv: e.lossValue };
+      let loss: ValveLoss;
+      if (e.lossType === 'orifice') {
+        if (!(e.lossValue > 0 && e.lossValue < e.diameterMm)) throw new Error(`${e.name}: orifice bore must be greater than 0 and smaller than the pipe diameter.`);
+        try {
+          loss = { type: 'K', k: orificeKPermanent(e.lossValue / e.diameterMm, e.orificeCd ?? ORIFICE_CD_DEFAULT) };
+        } catch (err) {
+          throw new Error(`${e.name}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      } else {
+        if (e.lossType === 'K' ? !(e.lossValue >= 0) : !(e.lossValue > 0)) throw new Error(`${e.name}: ${e.lossType} must be ${e.lossType === 'K' ? '≥ 0' : '> 0'}.`);
+        loss = e.lossType === 'K' ? { type: 'K', k: e.lossValue } : e.lossType === 'Cv' ? { type: 'Cv', cv: e.lossValue } : { type: 'Kv', kv: e.lossValue };
+      }
       let control: ValveControl | undefined;
       if (e.controlType === 'prv' || e.controlType === 'psv') {
         if (!(e.controlValue >= 0)) throw new Error(`${e.name}: set pressure must be ≥ 0.`);
@@ -484,7 +503,7 @@ function normalizeProject(p: Partial<ProjectUI> | undefined, depth = 0): Project
     nodes: p.nodes as NodeUI[],
     edges: (p.edges as EdgeUI[]).map((e) =>
       e.kind === 'valve'
-        ? { ...e, controlType: e.controlType ?? 'none', controlValue: isNum(e.controlValue) ? e.controlValue : 200 }
+        ? { ...e, controlType: e.controlType ?? 'none', controlValue: isNum(e.controlValue) ? e.controlValue : 200, ...(e.lossType === 'orifice' && !isNum(e.orificeCd) ? { orificeCd: ORIFICE_CD_DEFAULT } : {}) }
         : e.kind === 'pump'
           ? { ...e, ratedRpm: isNum(e.ratedRpm) ? e.ratedRpm : 1450 }
           : { ...e, lengthMode: e.lengthMode === 'canvas' ? 'canvas' : 'manual' },

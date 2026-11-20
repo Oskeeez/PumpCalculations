@@ -123,7 +123,7 @@ export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: 
 }
 
 export function ValveEditor({ valve, from, to, onChange }: { valve: ValveUI; from: string; to: string; onChange: (v: ValveUI) => void }) {
-  const unit = valve.lossType === 'K' ? '–' : valve.lossType === 'Cv' ? 'gpm @ 1 psi' : 'm³/h @ 1 bar';
+  const unit = valve.lossType === 'orifice' ? '' : valve.lossType === 'K' ? '–' : valve.lossType === 'Cv' ? 'gpm @ 1 psi' : 'm³/h @ 1 bar';
   const controlQ: Quantity = valve.controlType === 'fcv' ? 'flow' : 'pressure';
   return (
     <section className="editor">
@@ -158,9 +158,17 @@ export function ValveEditor({ valve, from, to, onChange }: { valve: ValveUI; fro
             <option value="K">Loss coefficient K</option>
             <option value="Cv">Cv (US)</option>
             <option value="Kv">Kv (metric)</option>
+            <option value="orifice">Orifice plate (bore)</option>
           </select>
         </label>
-        <NumField label={valve.lossType} unit={unit} value={valve.lossValue} onChange={(v) => onChange({ ...valve, lossValue: v })} />
+        {valve.lossType === 'orifice' ? (
+          <>
+            <NumField label="Bore diameter" q="diameter" value={valve.lossValue} onChange={(v) => onChange({ ...valve, lossValue: v })} />
+            <NumField label="Discharge coeff. Cd" unit="–" value={valve.orificeCd ?? 0.61} onChange={(v) => onChange({ ...valve, orificeCd: v })} title="0.61 is typical for a sharp-edged plate at high Reynolds number" />
+          </>
+        ) : (
+          <NumField label={valve.lossType} unit={unit} value={valve.lossValue} onChange={(v) => onChange({ ...valve, lossValue: v })} />
+        )}
       </div>
       <div className="checks">
         <label><input type="checkbox" checked={valve.open} onChange={(e) => onChange({ ...valve, open: e.target.checked })} /> Open</label>

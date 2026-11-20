@@ -203,3 +203,4 @@ table.cmp tr.sec td { background: color-mix(in srgb, var(--accent) 10%, transpar
 .img-head input[type='checkbox'] { width: auto; }
 input[type='range'] { padding: 0; }
 .canvas .t-sub { paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
+.orifice-icon { fill: none; stroke: var(--fg); stroke-width: 3; stroke-linecap: round; }

@@ -19,3 +19,4 @@ export * from './series';
 export * from './system';
 export * from './valve';
 export * from './fluidLibrary';
+export * from './orifice';

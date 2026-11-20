@@ -4,9 +4,9 @@ import type { InsertKind, NodeKind, NodeUI, ProjectUI } from '../model';
 import type { SystemResult } from '../solver';
 import { useUnits } from '../units';
 
-export type Tool = 'select' | 'tank' | 'junction' | 'pipe' | 'pump' | 'valve' | 'scale';
+export type Tool = 'select' | 'tank' | 'junction' | 'pipe' | 'pump' | 'valve' | 'orifice' | 'scale';
 export type Selection = { type: 'node' | 'edge'; uid: string } | null;
-export type ConnectKind = 'pipe' | 'pump' | 'valve';
+export type ConnectKind = 'pipe' | 'pump' | 'valve' | 'orifice';
 
 const GRID = 10;
 
@@ -37,6 +37,7 @@ const HINTS: Partial<Record<Tool, string>> = {
   junction: 'Click empty space to place a junction, or click a pipe to split it',
   pipe: 'Drag from node to node',
   valve: 'Click a pipe to insert a valve, or drag from node to node',
+  orifice: 'Click a pipe to insert an orifice plate, or drag from node to node',
   pump: 'Click a pipe to insert a pump, or drag from suction node to discharge node',
   scale: 'Click two points a known distance apart',
 };
@@ -50,7 +51,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
   const [drag, setDrag] = useState<{ kind: 'node' | 'image'; id: string; dx: number; dy: number } | null>(null);
   const [link, setLink] = useState<{ kind: ConnectKind; from: string; sx: number; sy: number; x: number; y: number; moved: boolean; target?: string } | null>(null);
   const nodeById = new Map(project.nodes.map((n) => [n.uid, n]));
-  const isConnect = tool === 'pipe' || tool === 'pump' || tool === 'valve';
+  const isConnect = tool === 'pipe' || tool === 'pump' || tool === 'valve' || tool === 'orifice';
 
   const toSvg = (e: { clientX: number; clientY: number }) => {
     const r = (svgRef.current as SVGSVGElement).getBoundingClientRect();
@@ -183,7 +184,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     return (
       <g key={e.uid} className={`edge ${e.kind} ${sel ? 'sel' : ''} ${closed ? 'closed' : ''}`} onPointerDown={(ev) => {
         if (tool === 'select') { ev.stopPropagation(); onSelect({ type: 'edge', uid: e.uid }); }
-        else if (e.kind === 'pipe' && (tool === 'junction' || tool === 'valve' || tool === 'pump')) {
+        else if (e.kind === 'pipe' && (tool === 'junction' || tool === 'valve' || tool === 'orifice' || tool === 'pump')) {
           ev.stopPropagation();
           const p = toSvg(ev);
           onInsert(tool, e.uid, p.x, p.y);
@@ -199,7 +200,11 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
           </g>
         ) : e.kind === 'valve' ? (
           <g transform={`translate(${mx} ${my}) rotate(${dirDeg})`}>
-            <path d="M-11,-9 L11,9 L11,-9 L-11,9 Z" className={`valve-icon ${closed ? 'closed' : ''}`} />
+            {e.lossType === 'orifice' ? (
+              <path d="M-2,-14 L-2,-4 M-2,4 L-2,14 M2,-14 L2,-4 M2,4 L2,14" className="valve-icon orifice-icon" />
+            ) : (
+              <path d="M-11,-9 L11,9 L11,-9 L-11,9 Z" className={`valve-icon ${closed ? 'closed' : ''}`} />
+            )}
             {e.checkValve && <line x1={9} y1={-12} x2={9} y2={12} className="valve-check" />}
             {closed && <path d="M-8,-14 L8,14 M8,-14 L-8,14" className="valve-x" />}
           </g>
