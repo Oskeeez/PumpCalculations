@@ -8,7 +8,7 @@
  * headDrop must be (weakly) increasing in Q for the network solver to be well-posed.
  */
 export interface HydraulicElement {
-  readonly kind: 'pipe' | 'pump';
+  readonly kind: 'pipe' | 'pump' | 'valve';
   /** h_from - h_to [m] for flow Q [m^3/s] from -> to. */
   headDrop(flowM3s: number): number;
   /** d(headDrop)/dQ [m per m^3/s]. */

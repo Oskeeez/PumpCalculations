@@ -16,8 +16,11 @@ export function Results({ computed, onSelectName }: { computed: Computed; onSele
       <div className="kpis">
         <div><span>Supplied by tanks</span><b>{f(tankSupply * 1000, 2)}</b> L/s</div>
         <div><span>Junction demand</span><b>{f(demand * 1000, 2)}</b> L/s</div>
-        <div><span>Pipes / pumps</span><b>{r.pipes.length}</b> / <b>{r.pumps.length}</b></div>
+        <div><span>Pipes / valves / pumps</span><b>{r.pipes.length}</b> / <b>{r.valves.length}</b> / <b>{r.pumps.length}</b></div>
       </div>
+      {computed.alerts.map((w, i) => (
+        <div key={`a${i}`} className="banner warn">⚑ Design alert: {w}</div>
+      ))}
       {r.warnings.map((w, i) => (
         <div key={i} className="banner warn">⚠ {w}</div>
       ))}
@@ -64,6 +67,33 @@ export function Results({ computed, onSelectName }: { computed: Computed; onSele
                     <td>{f(p.flow.frictionHeadLoss, 3)}</td>
                     <td>{f(p.flow.minorHeadLoss, 3)}</td>
                     <td>{f(p.headDropM, 3)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {r.valves.length > 0 && (
+        <>
+          <h3>Valves</h3>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Valve</th><th>From → To</th><th>Status</th><th>Q [L/s]</th><th>v [m/s]</th><th>K (equiv.)</th><th>Δp [kPa]</th><th>Δh [m]</th></tr>
+              </thead>
+              <tbody>
+                {r.valves.map((v) => (
+                  <tr key={v.id} className={v.status === 'open' ? '' : 'bad'} onClick={() => onSelectName(v.id)}>
+                    <td>{v.id}</td>
+                    <td>{v.from} → {v.to}</td>
+                    <td>{v.status}</td>
+                    <td>{f(v.flowM3s * 1000, 3)}</td>
+                    <td>{f(v.velocity, 3)}</td>
+                    <td>{f(v.equivalentK, 2)}</td>
+                    <td>{f(v.pressureDropPa / 1000, 2)}</td>
+                    <td>{f(v.headDropM, 3)}</td>
                   </tr>
                 ))}
               </tbody>

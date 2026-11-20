@@ -13,6 +13,7 @@ import {
   type PumpModel,
 } from './pump';
 import { tankHead } from './series';
+import { createValveElement, valveEquivalentK, type ValveSpec } from './valve';
 
 /**
  * General pipe-network model (SI): tanks and junctions joined by pipes and pumps in any topology
@@ -58,7 +59,15 @@ export interface SysPump {
   speedRatio: number;
 }
 
-export type SysEdge = SysPipe | SysPump;
+export interface SysValve {
+  kind: 'valve';
+  id: string;
+  from: string;
+  to: string;
+  spec: ValveSpec;
+}
+
+export type SysEdge = SysPipe | SysPump | SysValve;
 
 export interface SystemModel {
   fluid: Fluid;
@@ -116,6 +125,22 @@ export interface SystemPumpResult {
   warnings: string[];
 }
 
+export interface SystemValveResult {
+  id: string;
+  from: string;
+  to: string;
+  flowM3s: number;
+  /** h_from - h_to [m]. */
+  headDropM: number;
+  /** Pressure drop [Pa], rho g h. */
+  pressureDropPa: number;
+  velocity: number;
+  /** Equivalent loss coefficient K referenced to the valve diameter. */
+  equivalentK: number;
+  status: 'open' | 'closed' | 'check-closed';
+  warnings: string[];
+}
+
 export interface SystemResult {
   converged: boolean;
   iterations: number;
@@ -124,6 +149,7 @@ export interface SystemResult {
   nodes: SystemNodeResult[];
   pipes: SystemPipeResult[];
   pumps: SystemPumpResult[];
+  valves: SystemValveResult[];
   warnings: string[];
 }
 
@@ -151,15 +177,20 @@ export function buildNetwork(m: SystemModel): Network {
         ? { id: n.id, fixedHeadM: tankHead(n, m.fluid) }
         : { id: n.id, demandM3s: n.demandM3s },
     ),
-    edges: m.edges.map((e) => ({
-      id: e.id,
-      from: e.from,
-      to: e.to,
-      element:
-        e.kind === 'pipe'
-          ? createPipeElement({ ...e.spec, elevationChangeM: (z.get(e.to) as number) - (z.get(e.from) as number) }, m.fluid)
-          : createPumpElement(e.model, e.speedRatio),
-    })),
+    // Closed valves carry no flow and are removed from the network.
+    edges: m.edges
+      .filter((e) => !(e.kind === 'valve' && !e.spec.open))
+      .map((e) => ({
+        id: e.id,
+        from: e.from,
+        to: e.to,
+        element:
+          e.kind === 'pipe'
+            ? createPipeElement({ ...e.spec, elevationChangeM: (z.get(e.to) as number) - (z.get(e.from) as number) }, m.fluid)
+            : e.kind === 'valve'
+              ? createValveElement(e.spec)
+              : createPumpElement(e.model, e.speedRatio),
+      })),
   };
 }
 
@@ -167,14 +198,21 @@ export function solveSystem(m: SystemModel, opts: SystemOptions = {}): SystemRes
   const margin = opts.npshMarginM ?? 0.5;
   const rho = m.fluid.density;
   const net = buildNetwork(m);
-  const sol = solveNetwork(net, opts);
+  let sol;
+  try {
+    sol = solveNetwork(net, opts);
+  } catch (err) {
+    const closed = m.edges.filter((e) => e.kind === 'valve' && !e.spec.open).map((e) => e.id);
+    if (err instanceof NetworkError && closed.length) throw new NetworkError(`${err.message} (closed valves: ${closed.join(', ')}).`);
+    throw err;
+  }
   const warnings: string[] = [];
   if (!sol.converged) warnings.push(`Solver did not converge: ${sol.message}`);
 
   const nodeById = new Map(m.nodes.map((n) => [n.id, n]));
   const netOut = new Map<string, number>(m.nodes.map((n) => [n.id, n.kind === 'junction' ? n.demandM3s : 0]));
   for (const e of m.edges) {
-    const q = sol.flows[e.id];
+    const q = sol.flows[e.id] ?? 0;
     if (nodeById.get(e.from)?.kind === 'tank') netOut.set(e.from, (netOut.get(e.from) ?? 0) - q);
     if (nodeById.get(e.to)?.kind === 'tank') netOut.set(e.to, (netOut.get(e.to) ?? 0) + q);
   }
@@ -195,10 +233,33 @@ export function solveSystem(m: SystemModel, opts: SystemOptions = {}): SystemRes
 
   const pipes: SystemPipeResult[] = [];
   const pumps: SystemPumpResult[] = [];
+  const valves: SystemValveResult[] = [];
   for (const e of m.edges) {
-    const q = sol.flows[e.id];
+    const q = sol.flows[e.id] ?? 0;
     const h1 = hOf.get(e.from) as number;
     const h2 = hOf.get(e.to) as number;
+    if (e.kind === 'valve') {
+      const w: string[] = [];
+      let status: SystemValveResult['status'] = 'open';
+      if (!e.spec.open) status = 'closed';
+      else if (e.spec.checkValve && h2 - h1 > 1e-6 && q < 1e-6) {
+        status = 'check-closed';
+        w.push(`Valve "${e.id}": check valve is closed (downstream head exceeds upstream by ${(h2 - h1).toFixed(2)} m); no forward flow.`);
+      }
+      valves.push({
+        id: e.id,
+        from: e.from,
+        to: e.to,
+        flowM3s: q,
+        headDropM: h1 - h2,
+        pressureDropPa: (h1 - h2) * rho * G,
+        velocity: Math.abs(q) / pipeArea(e.spec.diameterM),
+        equivalentK: valveEquivalentK(e.spec),
+        status,
+        warnings: w,
+      });
+      continue;
+    }
     if (e.kind === 'pipe') {
       const flow = pipeFlowState({ ...e.spec, elevationChangeM: 0 }, m.fluid, q);
       const w: string[] = [];
@@ -248,6 +309,6 @@ export function solveSystem(m: SystemModel, opts: SystemOptions = {}): SystemRes
       warnings: w,
     });
   }
-  for (const r of [...nodes, ...pipes, ...pumps]) warnings.push(...r.warnings);
-  return { converged: sol.converged, iterations: sol.iterations, residualM3s: sol.residualM3s, message: sol.message, nodes, pipes, pumps, warnings };
+  for (const r of [...nodes, ...pipes, ...pumps, ...valves]) warnings.push(...r.warnings);
+  return { converged: sol.converged, iterations: sol.iterations, residualM3s: sol.residualM3s, message: sol.message, nodes, pipes, pumps, valves, warnings };
 }

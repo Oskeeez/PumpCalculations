@@ -2,7 +2,7 @@ import { useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import type { NodeKind, NodeUI, ProjectUI } from '../model';
 import type { SystemResult } from '../solver';
 
-export type Tool = 'select' | 'tank' | 'junction' | 'pipe' | 'pump';
+export type Tool = 'select' | 'tank' | 'junction' | 'pipe' | 'pump' | 'valve';
 export type Selection = { type: 'node' | 'edge'; uid: string } | null;
 
 export const CANVAS_W = 1100;
@@ -18,7 +18,7 @@ interface Props {
   onSelect: (s: Selection) => void;
   onAddNode: (kind: NodeKind, x: number, y: number) => void;
   onMoveNode: (uid: string, x: number, y: number) => void;
-  onConnect: (kind: 'pipe' | 'pump', from: string, to: string) => void;
+  onConnect: (kind: 'pipe' | 'pump' | 'valve', from: string, to: string) => void;
   onPending: (uid: string | undefined) => void;
 }
 
@@ -50,7 +50,7 @@ export function Canvas({ project, result, selection, tool, pending, onSelect, on
       const p = toSvg(e);
       setDrag({ uid: n.uid, dx: n.x - p.x, dy: n.y - p.y });
       svgRef.current?.setPointerCapture(e.pointerId);
-    } else if (tool === 'pipe' || tool === 'pump') {
+    } else if (tool === 'pipe' || tool === 'pump' || tool === 'valve') {
       if (!pending) onPending(n.uid);
       else if (pending !== n.uid) {
         onConnect(tool, pending, n.uid);
@@ -94,21 +94,26 @@ export function Canvas({ project, result, selection, tool, pending, onSelect, on
     const my = 0.25 * a.y + 0.5 * cy + 0.25 * b.y;
     const tx = b.x - a.x;
     const ty = b.y - a.y;
-    const pr = e.kind === 'pipe' ? result?.pipes.find((x) => x.id === e.name) : result?.pumps.find((x) => x.id === e.name);
+    const pr = e.kind === 'pipe' ? result?.pipes.find((x) => x.id === e.name) : e.kind === 'valve' ? result?.valves.find((x) => x.id === e.name) : result?.pumps.find((x) => x.id === e.name);
     const q = pr?.flowM3s ?? 0;
     const flowing = Math.abs(q) > 1e-9;
     const ang = (Math.atan2(ty, tx) * 180) / Math.PI + (q < 0 ? 180 : 0);
     const sel = selection?.type === 'edge' && selection.uid === e.uid;
-    const label = pr && flowing ? `${f(Math.abs(q) * 1000, 2)} L/s` : pr ? '0 L/s' : '';
+    const closed = e.kind === 'valve' && (!e.open || (pr !== undefined && 'status' in pr && pr.status === 'check-closed'));
+    const label = closed ? (e.kind === 'valve' && !e.open ? 'closed' : 'check closed') : pr && flowing ? `${f(Math.abs(q) * 1000, 2)} L/s` : pr ? '0 L/s' : '';
     const sub =
-      pr && e.kind === 'pipe' && 'flow' in pr
-        ? `${f(pr.flow.velocity, 2)} m/s`
-        : pr && e.kind === 'pump' && 'headM' in pr
-          ? `H ${f(pr.headM, 1)} m`
-          : '';
+      closed
+        ? ''
+        : pr && e.kind === 'pipe' && 'flow' in pr
+          ? `${f(pr.flow.velocity, 2)} m/s`
+          : pr && e.kind === 'pump' && 'headM' in pr
+            ? `H ${f(pr.headM, 1)} m`
+            : pr && e.kind === 'valve' && 'pressureDropPa' in pr
+              ? `Δp ${f(pr.pressureDropPa / 1000, 1)} kPa`
+              : '';
     const path = `M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`;
     return (
-      <g key={e.uid} className={`edge ${e.kind} ${sel ? 'sel' : ''}`} onPointerDown={(ev) => { ev.stopPropagation(); if (tool === 'select') onSelect({ type: 'edge', uid: e.uid }); }}>
+      <g key={e.uid} className={`edge ${e.kind} ${sel ? 'sel' : ''} ${closed ? 'closed' : ''}`} onPointerDown={(ev) => { ev.stopPropagation(); if (tool === 'select') onSelect({ type: 'edge', uid: e.uid }); }}>
         <path d={path} className="edge-hit" />
         <path d={path} className="edge-line" />
         {e.kind === 'pump' ? (
@@ -116,11 +121,17 @@ export function Canvas({ project, result, selection, tool, pending, onSelect, on
             <circle r={16} className="pump" />
             <path d="M-6,-8 L10,0 L-6,8 Z" className="pump-icon" transform={`rotate(${ang})`} />
           </g>
+        ) : e.kind === 'valve' ? (
+          <g transform={`translate(${mx} ${my}) rotate(${(Math.atan2(ty, tx) * 180) / Math.PI})`}>
+            <path d="M-11,-9 L11,9 L11,-9 L-11,9 Z" className={`valve-icon ${closed ? 'closed' : ''}`} />
+            {e.checkValve && <line x1={9} y1={-12} x2={9} y2={12} className="valve-check" />}
+            {closed && <path d="M-8,-14 L8,14 M8,-14 L-8,14" className="valve-x" />}
+          </g>
         ) : flowing ? (
           <path d="M-6,-5 L6,0 L-6,5 Z" className="flow-arrow" transform={`translate(${mx} ${my}) rotate(${ang})`} />
         ) : null}
-        <text x={mx} y={my - (e.kind === 'pump' ? 24 : 12)} textAnchor="middle" className="t-name">{e.name}</text>
-        {label && <text x={mx} y={my + (e.kind === 'pump' ? 32 : 22)} textAnchor="middle" className="t-res">{label}{sub ? ` · ${sub}` : ''}</text>}
+        <text x={mx} y={my - (e.kind === 'pump' ? 24 : 16)} textAnchor="middle" className="t-name">{e.name}</text>
+        {label && <text x={mx} y={my + (e.kind === 'pump' ? 32 : 26)} textAnchor="middle" className="t-res">{label}{sub ? ` · ${sub}` : ''}</text>}
       </g>
     );
   });
@@ -155,7 +166,7 @@ export function Canvas({ project, result, selection, tool, pending, onSelect, on
   const hint =
     tool === 'tank' || tool === 'junction'
       ? `Click empty canvas to place a ${tool}.`
-      : tool === 'pipe' || tool === 'pump'
+      : tool === 'pipe' || tool === 'pump' || tool === 'valve'
         ? pending
           ? `Click the node to connect the ${tool} to (Esc to cancel).`
           : `Click the node where the ${tool} starts.`

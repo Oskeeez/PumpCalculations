@@ -143,3 +143,18 @@ tbody tr[onclick], .results tbody tr { cursor: pointer; }
 .results tbody tr:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .canvas { width: 100%; height: auto; }
 .canvas-wrap { max-height: none; }
+.valve-icon { fill: var(--panel); stroke: var(--fg); stroke-width: 2; stroke-linejoin: round; }
+.valve-icon.closed { stroke: var(--err-fg); fill: var(--err-bg); }
+.valve-check { stroke: var(--fg); stroke-width: 3; }
+.valve-x { stroke: var(--err-fg); stroke-width: 2.5; fill: none; }
+.edge.closed .edge-line { stroke-dasharray: 6 6; opacity: 0.6; }
+.edge.valve .edge-line { stroke: #7f8da6; }
+select { font: inherit; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--fg); width: 100%; min-width: 0; }
+.checks { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.checks input { width: auto; margin-right: 6px; }
+.editor label.field + label.field { margin-top: 8px; }
+.menu { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.menu .sep { width: 1px; height: 22px; background: var(--border); margin: 0 4px; }
+.fluidbar { margin-bottom: 8px; align-items: flex-end; }
+.header-fluid .field.wide { width: 230px; }
+.fluidbar .fluid-props { flex-basis: 100%; }

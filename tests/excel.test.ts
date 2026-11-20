@@ -18,7 +18,7 @@ describe('Network Excel export', () => {
 
   it('has the expected sheets', async () => {
     const back = await run();
-    expect(back.worksheets.map((w) => w.name)).toEqual(['Inputs', 'Node results', 'Pipe results', 'Pump results', 'Pump curve']);
+    expect(back.worksheets.map((w) => w.name)).toEqual(['Inputs', 'Node results', 'Pipe results', 'Valve results', 'Pump results', 'Pump curve']);
   });
 
   it('formulas evaluate (independent engine) to the solver values, and the audit residuals are ~0', async () => {
@@ -50,12 +50,13 @@ describe('Network Excel export', () => {
       expect(Math.abs((got as number) - e.value), `${e.sheet} r${e.row + 1} c${e.col + 1}: ${got} vs ${e.value}`).toBeLessThan(1e-7 * Math.max(1, Math.abs(e.value)));
     }
     // audit columns, as evaluated by the independent engine
-    const nPipes = 5;
+    const nPipes = 6;
     for (let i = 0; i < nPipes; i++) expect(Math.abs(get('Pipe results', 3 + i, 14) as number)).toBeLessThan(1e-6); // loss - head difference
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 8; i++) {
       const v = get('Node results', 3 + i, 7);
       if (typeof v === 'number') expect(Math.abs(v)).toBeLessThan(1e-9); // junction continuity
     }
     expect(Math.abs(get('Pump results', 3, 7) as number)).toBeLessThan(1e-6); // pump curve - head across
+    expect(Math.abs(get('Valve results', 3, 10) as number)).toBeLessThan(1e-6); // valve K-drop - head difference
   });
 });

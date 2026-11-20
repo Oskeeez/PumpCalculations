@@ -177,7 +177,7 @@ export function solveNetwork(net: Network, opts: NetworkSolveOptions = {}): Netw
     const chord = net.edges.map((e, k) => {
       const [a, b] = edgeEnds[k];
       const dh = head[a] - head[b];
-      return e.element.kind === 'pipe' && Math.abs(dh) > 1e-9 && flows[k] * dh > 0 ? Math.max(flows[k] / dh, conductance[k]) : conductance[k];
+      return e.element.kind !== 'pump' && Math.abs(dh) > 1e-9 && flows[k] * dh > 0 ? Math.max(flows[k] / dh, conductance[k]) : conductance[k];
     });
     const residual = new Array<number>(nFree).fill(0);
     net.nodes.forEach((n, i) => {

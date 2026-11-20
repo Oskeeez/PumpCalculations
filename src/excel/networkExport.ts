@@ -39,11 +39,13 @@ export async function buildNetworkWorkbook(x: NetworkExportInput): Promise<Excel
   const inp = wb.addWorksheet('Inputs');
   const nr = wb.addWorksheet('Node results');
   const pr = wb.addWorksheet('Pipe results');
+  const vr = wb.addWorksheet('Valve results');
   const pm = wb.addWorksheet('Pump results');
   const pc = wb.addWorksheet('Pump curve');
 
   const pipes = model.edges.flatMap((e) => (e.kind === 'pipe' ? [e] : []));
   const pumps = model.edges.flatMap((e) => (e.kind === 'pump' ? [e] : []));
+  const valves = model.edges.flatMap((e) => (e.kind === 'valve' ? [e] : []));
 
   // ------------------------------------------------------------ Inputs
   let r = 1;
@@ -69,6 +71,7 @@ export async function buildNetworkWorkbook(x: NetworkExportInput): Promise<Excel
     });
 
   section('Fluid');
+  put('Fluid', model.fluid.name);
   put('Temperature', model.fluid.temperatureC, 'degC');
   const rRho = put('Density rho', rho, 'kg/m3');
   const rMu = put('Dynamic viscosity mu', mu, 'Pa.s');
@@ -110,6 +113,17 @@ export async function buildNetworkWorkbook(x: NetworkExportInput): Promise<Excel
     inp.getCell(r, 7).value = s.fittingsK.length ? { formula: `SUM(H${r}:${colLetter(7 + s.fittingsK.length)}${r})`, result: s.fittingsK.reduce((a, b) => a + b, 0) } : 0;
   }
 
+  section('Valves');
+  r += 1;
+  header(inp, r, ['Name', 'From', 'To', 'Diameter D [m]', 'Loss type', 'Coefficient (K, Cv or Kv)', 'Check valve', 'Open']);
+  const valveInRow = new Map<string, number>();
+  for (const v of valves) {
+    r += 1;
+    valveInRow.set(v.id, r);
+    const l = v.spec.loss;
+    [v.id, v.from, v.to, v.spec.diameterM, l.type, l.type === 'K' ? l.k : l.type === 'Cv' ? l.cv : l.kv, v.spec.checkValve ? 'yes' : 'no', v.spec.open ? 'yes' : 'no'].forEach((x, i) => (inp.getCell(r, i + 1).value = x));
+  }
+
   section('Pumps (fitted quadratics at rated speed, Q in m3/s)');
   r += 1;
   header(inp, r, ['Name', 'From (suction)', 'To (discharge)', 'H a0', 'H a1', 'H a2', 'eta a0', 'eta a1', 'eta a2', 'NPSHr a0', 'NPSHr a1', 'NPSHr a2', 'Speed ratio']);
@@ -129,6 +143,8 @@ export async function buildNetworkWorkbook(x: NetworkExportInput): Promise<Excel
   const nodeRow = new Map(model.nodes.map((n, i) => [n.id, 4 + i]));
   const pipeRow = new Map(pipes.map((p, i) => [p.id, 4 + i]));
   const pumpRow = new Map(pumps.map((p, i) => [p.id, 4 + i]));
+  const valveRow = new Map(valves.map((p, i) => [p.id, 4 + i]));
+  const lastValve = 3 + valves.length;
   const NH = (id: string) => `'Node results'!$C$${nodeRow.get(id)}`;
   const NZ = (id: string) => `'Node results'!$B$${nodeRow.get(id)}`;
   const lastPipe = 3 + pipes.length;
@@ -150,6 +166,7 @@ export async function buildNetworkWorkbook(x: NetworkExportInput): Promise<Excel
     const terms: string[] = [];
     if (pipes.length) terms.push(`SUMIF('Pipe results'!$C$4:$C$${lastPipe},A${row},'Pipe results'!$D$4:$D$${lastPipe})-SUMIF('Pipe results'!$B$4:$B$${lastPipe},A${row},'Pipe results'!$D$4:$D$${lastPipe})`);
     if (pumps.length) terms.push(`SUMIF('Pump results'!$C$4:$C$${lastPump},A${row},'Pump results'!$D$4:$D$${lastPump})-SUMIF('Pump results'!$B$4:$B$${lastPump},A${row},'Pump results'!$D$4:$D$${lastPump})`);
+    if (valves.length) terms.push(`SUMIF('Valve results'!$C$4:$C$${lastValve},A${row},'Valve results'!$D$4:$D$${lastValve})-SUMIF('Valve results'!$B$4:$B$${lastValve},A${row},'Valve results'!$D$4:$D$${lastValve})`);
     // net inflow from edges: for a junction equals the demand, for a tank it is what the tank absorbs
     const inflow = src.kind === 'junction' ? src.demandM3s : n.netOutflowM3s;
     nr.getCell(row, 6).value = terms.length ? { formula: terms.join('+'), result: inflow } : 0;
@@ -200,6 +217,43 @@ export async function buildNetworkWorkbook(x: NetworkExportInput): Promise<Excel
   pr.getCell(5 + pipes.length, 1).font = NOTE;
   pr.getColumn(1).width = 22;
   for (let c = 2; c <= 15; c++) pr.getColumn(c).width = 20;
+
+  // ------------------------------------------------------------ Valve results
+  vr.getCell('A1').value = 'Valve results';
+  vr.getCell('A1').font = { bold: true, size: 14 };
+  header(vr, 3, ['Valve', 'From', 'To', 'Flow Q [m3/s] (solver, + = from->to)', 'Head difference h_from - h_to [m]', 'Status', 'Area A [m2]', 'Velocity v [m/s]', 'Equivalent K [-]', 'Head drop from K [m]', 'Residual: K-based drop - head difference (~0)', 'Pressure drop [kPa]']);
+  for (const v of result.valves) {
+    const row = valveRow.get(v.id) as number;
+    const ir = valveInRow.get(v.id) as number;
+    const src = valves.find((q) => q.id === v.id)!;
+    const l = src.spec.loss;
+    const D = `Inputs!$D$${ir}`;
+    const area = (Math.PI / 4) * src.spec.diameterM ** 2;
+    const sgn = Math.sign(v.flowM3s);
+    vr.getCell(row, 1).value = v.id;
+    vr.getCell(row, 2).value = v.from;
+    vr.getCell(row, 3).value = v.to;
+    vr.getCell(row, 4).value = v.flowM3s;
+    vr.getCell(row, 5).value = { formula: `${NH(v.from)}-${NH(v.to)}`, result: v.headDropM };
+    vr.getCell(row, 6).value = v.status;
+    vr.getCell(row, 7).value = { formula: `PI()*${D}^2/4`, result: area };
+    vr.getCell(row, 8).value = { formula: `ABS(D${row})/G${row}`, result: v.velocity };
+    const kFormula =
+      l.type === 'K'
+        ? `Inputs!$F$${ir}`
+        : l.type === 'Cv'
+          ? `6894.757*2*G${row}^2/(999*(Inputs!$F$${ir}*0.0000630901964)^2)`
+          : `100000*2*G${row}^2/(999*(Inputs!$F$${ir}/3600)^2)`;
+    vr.getCell(row, 9).value = { formula: kFormula, result: v.equivalentK };
+    const comparable = v.status === 'open' && !(src.spec.checkValve && v.flowM3s < 0);
+    vr.getCell(row, 10).value = comparable ? { formula: `SIGN(D${row})*I${row}*H${row}^2/(2*${I(rG)})`, result: sgn * v.equivalentK * (v.velocity ** 2) / (2 * G) } : 'n/a';
+    vr.getCell(row, 11).value = comparable ? { formula: `J${row}-E${row}`, result: sgn * v.equivalentK * (v.velocity ** 2) / (2 * G) - v.headDropM } : 'n/a';
+    vr.getCell(row, 12).value = { formula: `E${row}*${I(rRho)}*${I(rG)}/1000`, result: v.pressureDropPa / 1000 };
+  }
+  vr.getCell(5 + valves.length, 1).value = 'Closed valves are removed from the network (zero flow). Cv/Kv are converted to an equivalent K; the residual column checks the energy balance across each open valve.';
+  vr.getCell(5 + valves.length, 1).font = NOTE;
+  vr.getColumn(1).width = 22;
+  for (let c = 2; c <= 12; c++) vr.getColumn(c).width = 22;
 
   // ------------------------------------------------------------ Pump results
   pm.getCell('A1').value = 'Pump results';
