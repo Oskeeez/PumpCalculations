@@ -37,6 +37,8 @@ export interface NetworkSolveOptions {
   /** Convergence tolerance on max |F_i| [m^3/s]. */
   flowTolM3s?: number;
   maxIterations?: number;
+  /** Number of initial chord (linear-theory) iterations before switching to Newton. Default 8. */
+  chordIterations?: number;
   /** Initial head guess for free nodes [m]; default is the mean fixed head. */
   initialHeadM?: number;
 }
@@ -112,13 +114,17 @@ export function flowForHeadDrop(element: HydraulicElement, dh: number, qGuess = 
 
 interface Evaluation {
   flows: number[];
+  /** Tangent conductance dQ/d(dh), regularised. */
   conductance: number[];
+  /** Chord conductance Q/dh (linear-theory step), equals the tangent where undefined. */
+  chord: number[];
   residual: number[]; // per free node
 }
 
 export function solveNetwork(net: Network, opts: NetworkSolveOptions = {}): NetworkSolution {
   const tol = opts.flowTolM3s ?? 1e-11;
   const maxIter = opts.maxIterations ?? 100;
+  const picardIters = opts.chordIterations ?? 8;
 
   const ids = new Map<string, number>();
   net.nodes.forEach((n, i) => {
@@ -167,6 +173,12 @@ export function solveNetwork(net: Network, opts: NetworkSolveOptions = {}): Netw
       return q;
     });
     const conductance = net.edges.map((e, k) => 1 / Math.max(e.element.dHeadDrop(flows[k]), MIN_HEAD_SLOPE));
+    // Chord (secant-through-origin) conductance Q/dh for pipes; tangent elsewhere or when dh ~ 0.
+    const chord = net.edges.map((e, k) => {
+      const [a, b] = edgeEnds[k];
+      const dh = head[a] - head[b];
+      return e.element.kind === 'pipe' && Math.abs(dh) > 1e-9 && flows[k] * dh > 0 ? Math.max(flows[k] / dh, conductance[k]) : conductance[k];
+    });
     const residual = new Array<number>(nFree).fill(0);
     net.nodes.forEach((n, i) => {
       if (freeOf[i] >= 0) residual[freeOf[i]] -= n.demandM3s ?? 0;
@@ -175,7 +187,7 @@ export function solveNetwork(net: Network, opts: NetworkSolveOptions = {}): Netw
       if (freeOf[a] >= 0) residual[freeOf[a]] -= flows[k];
       if (freeOf[b] >= 0) residual[freeOf[b]] += flows[k];
     });
-    return { flows, conductance, residual };
+    return { flows, conductance, chord, residual };
   };
 
   const maxAbs = (v: number[]) => v.reduce((m, x) => Math.max(m, Math.abs(x)), 0);
@@ -189,10 +201,14 @@ export function solveNetwork(net: Network, opts: NetworkSolveOptions = {}): Netw
 
   while (!converged && iterations < maxIter) {
     iterations++;
+    // The first few iterations use chord (linear-theory) conductances. Newton on a square-root-like
+    // pipe law can flip-flop across the root when far from it; the chord step lands on it exactly for a
+    // single such pipe and is robust globally. Newton then finishes with quadratic convergence.
+    const useChord = iterations <= picardIters;
     // Assemble A = -J (symmetric positive definite) in sparse row maps.
     const rows: Map<number, number>[] = Array.from({ length: nFree }, () => new Map<number, number>());
     edgeEnds.forEach(([a, b], k) => {
-      const g = ev.conductance[k];
+      const g = useChord ? ev.chord[k] : ev.conductance[k];
       const ia = freeOf[a];
       const ib = freeOf[b];
       if (ia >= 0) rows[ia].set(ia, (rows[ia].get(ia) ?? 0) + g);
@@ -212,7 +228,7 @@ export function solveNetwork(net: Network, opts: NetworkSolveOptions = {}): Netw
     for (let ls = 0; ls < 30; ls++) {
       hTrial = h.map((x, i) => (freeOf[i] >= 0 ? x + alpha * dh[freeOf[i]] : x));
       trial = evaluate(hTrial);
-      if (sumSq(trial.residual) <= (1 - 1e-4 * alpha) * f0) break;
+      if (useChord || sumSq(trial.residual) <= (1 - 1e-4 * alpha) * f0) break;
       alpha *= 0.5;
     }
     if (!trial) throw new NetworkError('Line search failed to evaluate');

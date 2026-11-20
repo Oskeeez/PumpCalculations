@@ -51,13 +51,13 @@ export function pumpHead(model: PumpModel, flowM3s: number, speedRatio = 1): num
   const r = speedRatio;
   const { a0, a1, a2 } = model.head;
   if (flowM3s >= 0) return a0 * r * r + a1 * r * flowM3s + a2 * flowM3s * flowM3s;
-  return a0 * r * r - PUMP_CHECK_VALVE_STIFFNESS * flowM3s;
+  return a0 * r * r + a1 * r * flowM3s + PUMP_CHECK_VALVE_STIFFNESS * flowM3s * flowM3s;
 }
 
 /** dH/dQ at speed ratio r [m per m^3/s]. */
 export function pumpHeadSlope(model: PumpModel, flowM3s: number, speedRatio = 1): number {
   if (flowM3s >= 0) return model.head.a1 * speedRatio + 2 * model.head.a2 * flowM3s;
-  return -PUMP_CHECK_VALVE_STIFFNESS;
+  return model.head.a1 * speedRatio + 2 * PUMP_CHECK_VALVE_STIFFNESS * flowM3s;
 }
 
 /** Shutoff (Q = 0) head at speed ratio r [m]. */

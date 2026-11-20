@@ -126,8 +126,10 @@ describe('pump curve fit and affinity laws', () => {
     const el = createPumpElement(model, 1);
     expect(el.headDrop(0)).toBeCloseTo(-model.head.a0, 12);
     // head the downstream side must exceed (h_to - h_from) rises steeply with reverse flow
-    expect(-el.headDrop(-1e-6)).toBeGreaterThan(-el.headDrop(0) + 5);
-    expect(el.dHeadDrop(-1e-6)).toBeGreaterThan(1e5);
+    expect(-el.headDrop(-1e-5)).toBeGreaterThan(-el.headDrop(0) + 5);
+    expect(el.dHeadDrop(-1e-5)).toBeGreaterThan(1e5);
+    // C1 at zero flow: slope is continuous across Q = 0
+    expect(el.dHeadDrop(-1e-12)).toBeCloseTo(el.dHeadDrop(1e-12), -1);
   });
 
   it('omits efficiency / NPSHr when no data were given', () => {

@@ -16,3 +16,4 @@ export * from './polynomial';
 export * from './pump';
 export * from './rootfinding';
 export * from './series';
+export * from './system';

@@ -16,10 +16,11 @@ export const RE_TURBULENT_MIN = 4000;
 export const MIN_PUMP_EFFICIENCY = 0.05;
 
 /**
- * Check-valve stiffness for a pump at reverse flow [m of head per m^3/s].
- * Reverse flow through a pump is blocked by making the head requirement rise steeply.
+ * Check-valve stiffness for a pump at reverse flow [m per (m^3/s)^2].
+ * For Q < 0 the pump head is the tangent line at Q = 0 plus K Q^2, so the curve stays C1 at zero flow
+ * (Newton does not oscillate across Q = 0) while reverse flow is held to ~1e-5 m^3/s for tens of metres.
  */
-export const PUMP_CHECK_VALVE_STIFFNESS = 1e7;
+export const PUMP_CHECK_VALVE_STIFFNESS = 1e12;
 
 /**
  * Floor on d(head drop)/dQ used when inverting elements to dQ/d(head) [m per m^3/s].

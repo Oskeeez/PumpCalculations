@@ -2,44 +2,68 @@ import type { Computed } from '../model';
 
 const f = (v: number | undefined, d = 2) => (v === undefined || !Number.isFinite(v) ? '–' : v.toFixed(d));
 
-export function Results({ computed }: { computed: Computed }) {
+export function Results({ computed, onSelectName }: { computed: Computed; onSelectName: (name: string) => void }) {
   if (computed.error) return <div className="banner error">{computed.error}</div>;
-  const { op, analysis } = computed;
-  if (!op || !analysis) return null;
-  const ok = op.status === 'ok';
+  const r = computed.result;
+  if (!r) return null;
+  const tankSupply = r.nodes.filter((n) => n.kind === 'tank').reduce((s, n) => s + Math.max(0, -n.netOutflowM3s), 0);
+  const demand = r.nodes.filter((n) => n.kind === 'junction').reduce((s, n) => s + n.netOutflowM3s, 0);
   return (
     <div className="results">
-      <div className={`banner ${ok ? 'ok' : 'error'}`}>{ok ? 'Operating point found.' : op.message}</div>
-      {ok && (
-        <div className="kpis">
-          <div><span>Flow Q</span><b>{f(op.flowM3s * 1000, 2)}</b> L/s <small>{f(op.flowM3s * 3600, 1)} m³/h</small></div>
-          <div><span>Head H</span><b>{f(op.headM, 2)}</b> m</div>
-          <div><span>Friction loss</span><b>{f(analysis.totalFrictionLossM, 2)}</b> m</div>
-          <div><span>Minor loss</span><b>{f(analysis.totalMinorLossM, 2)}</b> m</div>
-        </div>
-      )}
-      {computed.warnings.map((w, i) => (
+      <div className={`banner ${r.converged ? 'ok' : 'error'}`}>
+        {r.converged ? `Solved: ${r.message.toLowerCase()} (max node imbalance ${r.residualM3s.toExponential(1)} m³/s).` : `Not converged: ${r.message}`}
+      </div>
+      <div className="kpis">
+        <div><span>Supplied by tanks</span><b>{f(tankSupply * 1000, 2)}</b> L/s</div>
+        <div><span>Junction demand</span><b>{f(demand * 1000, 2)}</b> L/s</div>
+        <div><span>Pipes / pumps</span><b>{r.pipes.length}</b> / <b>{r.pumps.length}</b></div>
+      </div>
+      {r.warnings.map((w, i) => (
         <div key={i} className="banner warn">⚠ {w}</div>
       ))}
-      {ok && analysis.pipes.length > 0 && (
+
+      <h3>Nodes</h3>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Node</th><th>Elev. [m]</th><th>Head [m]</th><th>Gauge p [kPa]</th><th>Abs p [kPa]</th><th>Net out [L/s]</th></tr>
+          </thead>
+          <tbody>
+            {r.nodes.map((n) => (
+              <tr key={n.id} className={n.warnings.length ? 'bad' : ''} onClick={() => onSelectName(n.id)}>
+                <td>{n.id} <small>({n.kind})</small></td>
+                <td>{f(n.elevationM)}</td>
+                <td>{f(n.headM)}</td>
+                <td>{f(n.gaugePressurePa / 1000, 1)}</td>
+                <td>{f(n.absolutePressurePa / 1000, 1)}</td>
+                <td>{f(n.netOutflowM3s * 1000, 2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {r.pipes.length > 0 && (
         <>
           <h3>Pipes</h3>
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Pipe</th><th>v [m/s]</th><th>Re</th><th>Regime</th><th>f</th><th>h_f [m]</th><th>h_m [m]</th><th>Total [m]</th></tr>
+                <tr><th>Pipe</th><th>From → To</th><th>Q [L/s]</th><th>v [m/s]</th><th>Re</th><th>Regime</th><th>f</th><th>h_f [m]</th><th>h_m [m]</th><th>Δh [m]</th></tr>
               </thead>
               <tbody>
-                {analysis.pipes.map((p, i) => (
-                  <tr key={i}>
+                {r.pipes.map((p) => (
+                  <tr key={p.id} onClick={() => onSelectName(p.id)}>
                     <td>{p.id}</td>
+                    <td>{p.from} → {p.to}</td>
+                    <td>{f(p.flowM3s * 1000, 3)}</td>
                     <td>{f(p.flow.velocity, 3)}</td>
                     <td>{Math.round(p.flow.reynolds).toLocaleString()}</td>
                     <td>{p.flow.regime}</td>
-                    <td>{f(p.flow.frictionFactor, 5)}</td>
+                    <td>{Number.isFinite(p.flow.frictionFactor) ? f(p.flow.frictionFactor, 5) : '–'}</td>
                     <td>{f(p.flow.frictionHeadLoss, 3)}</td>
                     <td>{f(p.flow.minorHeadLoss, 3)}</td>
-                    <td>{f(p.flow.totalHeadLoss, 3)}</td>
+                    <td>{f(p.headDropM, 3)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -47,18 +71,20 @@ export function Results({ computed }: { computed: Computed }) {
           </div>
         </>
       )}
-      {ok && analysis.pumps.length > 0 && (
+
+      {r.pumps.length > 0 && (
         <>
           <h3>Pumps</h3>
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Pump</th><th>H [m]</th><th>η</th><th>Shaft [kW]</th><th>NPSHa [m]</th><th>NPSHr [m]</th><th>Margin [m]</th></tr>
+                <tr><th>Pump</th><th>Q [L/s]</th><th>H [m]</th><th>η</th><th>Shaft [kW]</th><th>NPSHa [m]</th><th>NPSHr [m]</th><th>Margin [m]</th></tr>
               </thead>
               <tbody>
-                {analysis.pumps.map((p, i) => (
-                  <tr key={i} className={p.warnings.length ? 'bad' : ''}>
+                {r.pumps.map((p) => (
+                  <tr key={p.id} className={p.warnings.length ? 'bad' : ''} onClick={() => onSelectName(p.id)}>
                     <td>{p.id}</td>
+                    <td>{f(p.flowM3s * 1000, 3)}</td>
                     <td>{f(p.headM)}</td>
                     <td>{p.efficiency !== undefined ? `${f(p.efficiency * 100, 1)} %` : '–'}</td>
                     <td>{f(p.shaftPowerW !== undefined ? p.shaftPowerW / 1000 : undefined, 3)}</td>

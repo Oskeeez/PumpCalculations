@@ -1,35 +1,62 @@
-import type { FittingUI, PipeUI, PumpUI, TankUI } from '../model';
+import type { FittingUI, NodeUI, PipeUI, PumpUI } from '../model';
 import { NumField } from './NumField';
 
-export function TankEditor({ title, tank, onChange }: { title: string; tank: TankUI; onChange: (t: TankUI) => void }) {
+function NameField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <label className="field">
+      <span>Name</span>
+      <input value={value} onChange={(e) => onChange(e.target.value)} />
+    </label>
+  );
+}
+
+export function NodeEditor({ node, onChange }: { node: NodeUI; onChange: (n: NodeUI) => void }) {
+  const isTank = node.kind === 'tank';
   return (
     <section className="editor">
-      <h3>{title}</h3>
+      <h3>{isTank ? 'Tank (fixed-head boundary)' : 'Junction'}</h3>
+      <NameField value={node.name} onChange={(name) => onChange({ ...node, name })} />
       <div className="grid">
-        <NumField label="Bottom elevation" unit="m" value={tank.elevationM} onChange={(v) => onChange({ ...tank, elevationM: v })} />
-        <NumField label="Liquid level" unit="m" value={tank.levelM} onChange={(v) => onChange({ ...tank, levelM: v })} />
-        <NumField label="Pressure above liquid (abs)" unit="kPa" value={tank.pressureKPa} onChange={(v) => onChange({ ...tank, pressureKPa: v })} title="101.325 kPa = atmospheric" />
+        <NumField label={isTank ? 'Bottom elevation' : 'Elevation'} unit="m" value={node.elevationM} onChange={(v) => onChange({ ...node, elevationM: v })} />
+        {isTank ? (
+          <>
+            <NumField label="Liquid level" unit="m" value={node.levelM} onChange={(v) => onChange({ ...node, levelM: v })} />
+            <NumField label="Pressure above liquid (abs)" unit="kPa" value={node.pressureKPa} onChange={(v) => onChange({ ...node, pressureKPa: v })} title="101.325 kPa = atmospheric" />
+          </>
+        ) : (
+          <NumField label="Demand (withdrawal)" unit="L/s" value={node.demandLps} onChange={(v) => onChange({ ...node, demandLps: v })} title="Negative = flow injected into the network" />
+        )}
       </div>
-      <p className="hint">Liquid surface elevation = bottom elevation + level. Default pressure is atmospheric (101.325 kPa abs).</p>
+      <p className="hint">
+        {isTank
+          ? 'Liquid surface elevation = bottom elevation + level. Tanks hold the head fixed and supply or absorb whatever flow the network needs. Default pressure is atmospheric.'
+          : 'Demand is a fixed outflow at this node (negative injects flow). Pipe elevation changes come from the node elevations.'}
+      </p>
     </section>
   );
 }
 
-export function PipeEditor({ pipe, onChange }: { pipe: PipeUI; onChange: (p: PipeUI) => void }) {
+function Ends({ from, to, onSwap }: { from: string; to: string; onSwap: () => void }) {
+  return (
+    <p className="ends">
+      <b>{from}</b> → <b>{to}</b>
+      <button onClick={onSwap} title="Reverse the positive flow direction">⇄ Swap direction</button>
+    </p>
+  );
+}
+
+export function PipeEditor({ pipe, from, to, onChange }: { pipe: PipeUI; from: string; to: string; onChange: (p: PipeUI) => void }) {
   const setFit = (i: number, f: FittingUI) => onChange({ ...pipe, fittings: pipe.fittings.map((x, j) => (j === i ? f : x)) });
   const total = pipe.fittings.reduce((s, f) => s + f.k, 0);
   return (
     <section className="editor">
       <h3>Pipe</h3>
-      <label className="field">
-        <span>Name</span>
-        <input value={pipe.name} onChange={(e) => onChange({ ...pipe, name: e.target.value })} />
-      </label>
+      <NameField value={pipe.name} onChange={(name) => onChange({ ...pipe, name })} />
+      <Ends from={from} to={to} onSwap={() => onChange({ ...pipe, from: pipe.to, to: pipe.from })} />
       <div className="grid">
         <NumField label="Length" unit="m" value={pipe.lengthM} onChange={(v) => onChange({ ...pipe, lengthM: v })} />
         <NumField label="Inner diameter" unit="mm" value={pipe.diameterMm} onChange={(v) => onChange({ ...pipe, diameterMm: v })} />
         <NumField label="Roughness ε" unit="mm" value={pipe.roughnessMm} onChange={(v) => onChange({ ...pipe, roughnessMm: v })} />
-        <NumField label="Elevation change" unit="m" value={pipe.elevationChangeM} onChange={(v) => onChange({ ...pipe, elevationChangeM: v })} />
       </div>
       <h4>Fittings (K values), total K = {total.toFixed(2)}</h4>
       <table className="pts">
@@ -95,14 +122,12 @@ function Points<T>({ title, cols, rows, get, make, onChange, note }: PointsProps
   );
 }
 
-export function PumpEditor({ pump, onChange, headFitRmse }: { pump: PumpUI; onChange: (p: PumpUI) => void; headFitRmse?: number }) {
+export function PumpEditor({ pump, from, to, onChange, headFitRmse }: { pump: PumpUI; from: string; to: string; onChange: (p: PumpUI) => void; headFitRmse?: number }) {
   return (
     <section className="editor">
       <h3>Pump</h3>
-      <label className="field">
-        <span>Name</span>
-        <input value={pump.name} onChange={(e) => onChange({ ...pump, name: e.target.value })} />
-      </label>
+      <NameField value={pump.name} onChange={(name) => onChange({ ...pump, name })} />
+      <Ends from={`${from} (suction)`} to={`${to} (discharge)`} onSwap={() => onChange({ ...pump, from: pump.to, to: pump.from })} />
       <div className="grid">
         <NumField label="Speed ratio N/N_rated" value={pump.speedRatio} onChange={(v) => onChange({ ...pump, speedRatio: v })} title="Affinity laws: Q ∝ N, H ∝ N², P ∝ N³" />
       </div>
