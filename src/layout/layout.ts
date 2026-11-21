@@ -4,11 +4,12 @@
  * Invariants kept by `normalize`: a panel appears at most once, groups are never empty, splits have at least two children,
  * a split never directly contains a split of the same direction, and sizes sum to 1.
  */
-export type PanelId = 'network' | 'properties' | 'pumpcurves' | 'results' | 'pumpchart' | 'targets' | 'scale' | 'speed' | 'scenarios' | 'report' | 'view3d' | 'coords3d' | 'ai' | 'drafts';
+export type PanelId = 'network' | 'properties' | 'solve' | 'pumpcurves' | 'results' | 'pumpchart' | 'targets' | 'scale' | 'speed' | 'scenarios' | 'report' | 'view3d' | 'coords3d' | 'ai' | 'drafts';
 
 export const PANEL_TITLES: Record<PanelId, string> = {
   network: 'Network',
   properties: 'Properties',
+  solve: 'Solve for me',
   pumpcurves: 'Pump curves',
   results: 'Results',
   pumpchart: 'Pump curve',
@@ -218,18 +219,18 @@ export const PRESETS: { id: PresetId; label: string }[] = [
 export function presetLayout(id: PresetId): LayoutNode {
   switch (id) {
     case 'network3d':
-      return split('row', [[0.4, group(['network'])], [0.4, group(['view3d', 'coords3d'])], [0.2, group(['properties', 'pumpcurves', 'targets', 'scale', 'ai', 'drafts'], 'properties')]]);
+      return split('row', [[0.4, group(['network'])], [0.4, group(['view3d', 'coords3d'])], [0.2, group(['properties', 'solve', 'pumpcurves', 'targets', 'scale', 'ai', 'drafts'], 'properties')]]);
     case 'analysis':
       return split('row', [
         [0.55, split('col', [[0.6, group(['network'])], [0.4, group(['results', 'speed', 'scenarios', 'report'])]])],
-        [0.45, split('col', [[0.5, group(['pumpchart', 'view3d', 'coords3d'])], [0.5, group(['properties', 'pumpcurves', 'targets', 'scale', 'ai', 'drafts'], 'properties')]])],
+        [0.45, split('col', [[0.5, group(['pumpchart', 'view3d', 'coords3d'])], [0.5, group(['properties', 'solve', 'pumpcurves', 'targets', 'scale', 'ai', 'drafts'], 'properties')]])],
       ]);
     case 'ai':
-      return split('row', [[0.4, group(['network', 'view3d', 'coords3d'], 'network')], [0.3, group(['ai', 'properties', 'pumpcurves', 'targets', 'scale'], 'ai')], [0.3, group(['drafts', 'results', 'pumpchart', 'speed', 'scenarios', 'report'], 'drafts')]]);
+      return split('row', [[0.4, group(['network', 'view3d', 'coords3d'], 'network')], [0.3, group(['ai', 'properties', 'solve', 'pumpcurves', 'targets', 'scale'], 'ai')], [0.3, group(['drafts', 'results', 'pumpchart', 'speed', 'scenarios', 'report'], 'drafts')]]);
     default:
       return split('row', [
         [0.68, split('col', [[0.68, group(['network'])], [0.32, group(['results', 'pumpchart', 'speed', 'scenarios', 'report', 'view3d', 'coords3d'], 'results')]])],
-        [0.32, group(['properties', 'pumpcurves', 'targets', 'scale', 'ai', 'drafts'], 'properties')],
+        [0.32, group(['properties', 'solve', 'pumpcurves', 'targets', 'scale', 'ai', 'drafts'], 'properties')],
       ]);
   }
 }

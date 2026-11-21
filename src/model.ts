@@ -167,6 +167,8 @@ export interface ProjectUI {
   drafts?: Draft[];
   /** Library of reusable pump curves. */
   pumpCurves?: PumpCurveEntry[];
+  /** Uids of nodes and components the solver must not change (anything connected to a locked node is kept too). */
+  locked?: string[];
 }
 
 export interface ImageLayer {
@@ -185,7 +187,7 @@ export interface ImageLayer {
 }
 
 /** Everything the hydraulic calculation needs (no images, no saved scenarios). */
-export type HydraulicProject = Omit<ProjectUI, 'scenarios' | 'images' | 'targets' | 'assumptions' | 'drafts' | 'pumpCurves'>;
+export type HydraulicProject = Omit<ProjectUI, 'scenarios' | 'images' | 'targets' | 'assumptions' | 'drafts' | 'pumpCurves' | 'locked'>;
 
 /** A named snapshot of the hydraulic model (images are not part of a snapshot). */
 export interface Scenario {
@@ -668,6 +670,11 @@ function normalizeProject(p: Partial<ProjectUI> | undefined, depth = 0): Project
     if (!Array.isArray(p.assumptions) || p.assumptions.some((a) => !a || !isStr(a.id) || !isStr(a.text))) throw new Error('An assumption in the project file is malformed.');
     project.assumptions = p.assumptions;
   }
+  if (p.locked !== undefined) {
+    if (!Array.isArray(p.locked) || p.locked.some((u) => !isStr(u))) throw new Error('The list of locked items in the project file is malformed.');
+    const known = new Set([...p.nodes.map((n) => n.uid), ...p.edges.map((e) => e.uid)]);
+    project.locked = p.locked.filter((u) => known.has(u));
+  }
   if (p.pumpCurves !== undefined) {
     const ok = (a: unknown, k1: string, k2: string) => Array.isArray(a) && a.every((r) => r && isNum((r as Record<string, unknown>)[k1]) && isNum((r as Record<string, unknown>)[k2]));
     if (!Array.isArray(p.pumpCurves) || p.pumpCurves.some((c) => !c || !isStr(c.id) || !isStr(c.name) || !ok(c.head, 'q', 'h') || !ok(c.efficiency, 'q', 'eta') || !ok(c.npshr, 'q', 'h'))) throw new Error('A pump curve in the project file is malformed.');
@@ -676,7 +683,7 @@ function normalizeProject(p: Partial<ProjectUI> | undefined, depth = 0): Project
   if (depth === 0 && p.drafts !== undefined) {
     if (!Array.isArray(p.drafts)) throw new Error('The drafts in the project file are malformed.');
     const hyd = (x: unknown): HydraulicProject => {
-      const { scenarios: _s, images: _i, targets: _t, assumptions: _a, drafts: _d, pumpCurves: _c, ...rest } = normalizeProject(x as Partial<ProjectUI>, 1);
+      const { scenarios: _s, images: _i, targets: _t, assumptions: _a, drafts: _d, pumpCurves: _c, locked: _l, ...rest } = normalizeProject(x as Partial<ProjectUI>, 1);
       return rest;
     };
     project.drafts = p.drafts.map((d) => {

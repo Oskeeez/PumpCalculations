@@ -50,7 +50,9 @@ export function pasteClip(p: ProjectUI, clip: Clip, offset = { x: 40, y: 40 }): 
 
 /** Delete nodes and every pipe, valve and pump attached to them. */
 export function removeNodes(p: ProjectUI, uids: ReadonlySet<string>): ProjectUI {
-  return { ...p, nodes: p.nodes.filter((n) => !uids.has(n.uid)), edges: p.edges.filter((e) => !uids.has(e.from) && !uids.has(e.to)) };
+  const edges = p.edges.filter((e) => !uids.has(e.from) && !uids.has(e.to));
+  const keep = new Set([...p.nodes.filter((n) => !uids.has(n.uid)).map((n) => n.uid), ...edges.map((e) => e.uid)]);
+  return { ...p, nodes: p.nodes.filter((n) => !uids.has(n.uid)), edges, locked: p.locked?.filter((u) => keep.has(u)) };
 }
 
 /** Move nodes by a canvas offset. */

@@ -70,6 +70,8 @@ interface Props {
   onPickCancel?: () => void;
   /** Draft view: colour added / modified components. */
   highlight?: Map<string, 'added' | 'modified'>;
+  /** Items the solver must not change: they show a lock. */
+  locked?: ReadonlySet<string>;
   /** Draft view: components that exist in the parent but not in this draft, drawn as ghosts. */
   removed?: { nodes: NodeUI[]; edges: EdgeUI[] };
   /** No editing: selecting only. */
@@ -118,7 +120,7 @@ const PICK_NAME: Record<PickAccept, string> = { node: 'node', pump: 'pump', line
  * Network canvas with a pan / zoom viewport that fills its tile. Scroll zooms about the pointer, dragging empty space pans, the +/−
  * buttons zoom, Fit shows the whole network. Symbol size (nodes, valves, pumps, labels) is separate from the zoom.
  */
-export function Canvas({ project, result, selection, tool, pending, calib, onSelect, onTool, onAddNode, onMoveNode, multi, onMulti, onMoveNodes, onMoveImage, onConnect, onInsert, onConnectNew, onConnectBlank, onPlace, onReverse, adjustImageId, onZoomImage, onAdjustDone, onPending, onCalibPoint, fitKey, pick, focus, onPick, onPickCancel, highlight, removed, readOnly }: Props) {
+export function Canvas({ project, result, selection, tool, pending, calib, onSelect, onTool, onAddNode, onMoveNode, multi, onMulti, onMoveNodes, onMoveImage, onConnect, onInsert, onConnectNew, onConnectBlank, onPlace, onReverse, adjustImageId, onZoomImage, onAdjustDone, onPending, onCalibPoint, fitKey, pick, focus, onPick, onPickCancel, highlight, locked, removed, readOnly }: Props) {
   const U = useUnits();
   const W = project.canvasW;
   const H = project.canvasH;
@@ -392,6 +394,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
       >
         <path d={path} className="edge-hit" />
         <path d={path} className="edge-line" />
+        {locked?.has(e.uid) && <text x={mx} y={my - 14 * sym} textAnchor="middle" className="lock" style={{ fontSize: 13 * sym }}>🔒</text>}
         {e.kind === 'pump' ? (
           <g transform={`translate(${mx} ${my}) scale(${sym})`}>
             <circle r={16} className="pump" />
@@ -451,6 +454,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
         ) : (
           <circle r={11} className="junction" />
         )}
+        {locked?.has(n.uid) && <text x={n.kind === 'tank' ? 26 : 10} y={-14} className="lock">🔒</text>}
         {opts.labels !== 'none' && <text y={top} textAnchor="middle" className="t-name">{n.name}</text>}
         {opts.labels === 'full' && (
           <text y={top + 13} textAnchor="middle" className="t-sub">

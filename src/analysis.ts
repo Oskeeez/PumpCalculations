@@ -91,7 +91,7 @@ export function speedSweep(project: ProjectUI, pumpUid: string, ratios: number[]
 // ---------------------------------------------------------------- scenarios
 
 export function snapshotScenario(project: ProjectUI, name: string): Scenario {
-  const { scenarios: _scenarios, images: _images, targets: _targets, assumptions: _assumptions, drafts: _drafts, pumpCurves: _curves, ...rest } = project;
+  const { scenarios: _scenarios, images: _images, targets: _targets, assumptions: _assumptions, drafts: _drafts, pumpCurves: _curves, locked: _locked, ...rest } = project;
   return { id: newUid(), name: name.trim() || 'Scenario', project: JSON.parse(JSON.stringify(rest)) as Scenario['project'] };
 }
 

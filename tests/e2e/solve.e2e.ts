@@ -1,0 +1,48 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { open, startApp, type App } from './harness';
+
+let app: App;
+beforeAll(async () => { app = await startApp(); });
+afterAll(async () => { await app.close(); });
+
+describe('solve for me', () => {
+  it('locks an item, shows a lock on the network, and applies a solve as one undo step', async () => {
+    const s = await open(app);
+    const tab = (name: string) => s.page.locator('.ws-tab', { hasText: name }).first();
+
+    // lock from the Properties panel
+    await s.page.locator('g.node.junction').first().click({ force: true });
+    await tab('Properties').click();
+    await s.page.getByLabel(/Don't change this when solving for me/).check();
+    expect(await s.page.locator('svg.canvas text.lock').count()).toBeGreaterThan(0);
+
+    // no targets yet: the panel says so
+    await tab('Solve for me').click();
+    expect(await s.page.locator('.solve .banner.warn').first().textContent()).toMatch(/no targets/i);
+    expect(await s.page.locator('.solve summary', { hasText: /Don't change these \(1 locked\)/ }).count()).toBe(1);
+    await s.page.getByRole('button', { name: 'Unlock all' }).click();
+    expect(await s.page.locator('svg.canvas text.lock').count()).toBe(0);
+
+    // add a target that fails, then solve and apply
+    await tab('Targets').click();
+    await s.page.getByRole('button', { name: 'Residual pressure at a node' }).click();
+    const first = s.page.locator('.targets .unit-row input').first();
+    await first.fill('600');
+    await tab('Solve for me').click();
+    expect(await s.page.locator('.solve .banner.warn').first().textContent()).toMatch(/failing/);
+    await s.page.getByRole('button', { name: 'Solve this for me' }).click();
+    await s.page.waitForSelector('.solve-result');
+    expect(await s.page.locator('.solve-result .banner').first().textContent()).toMatch(/targets|Nothing|changes/i);
+    const text = await s.page.locator('.solve-result').innerText();
+    if (/Every target can be met/.test(text)) {
+      await s.page.getByRole('button', { name: 'Apply these changes' }).click();
+      expect(await s.page.locator('.solve .banner.ok').first().textContent()).toMatch(/pass now/);
+      await s.page.keyboard.press('Control+z'); // one undo step puts the old design back
+      expect(await s.page.locator('.solve .banner.warn').first().textContent()).toMatch(/failing/);
+    } else {
+      expect(text).toMatch(/closer|get as close|Nothing was changed/);
+    }
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+});

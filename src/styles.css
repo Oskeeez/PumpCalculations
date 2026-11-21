@@ -438,3 +438,15 @@ body.ws-resizing-row { cursor: row-resize; user-select: none; }
 .unit-row { display: flex; gap: 4px; }
 .unit-row input { flex: 1; min-width: 0; }
 .unit-row select { flex: 0 0 auto; width: auto; max-width: 96px; }
+
+/* solve for me */
+.solve { display: flex; flex-direction: column; gap: 10px; }
+.solve .allow { display: flex; flex-direction: column; gap: 6px; }
+.solve .check { display: flex; gap: 8px; align-items: center; }
+.solve .check input { width: auto; }
+.solve .lock-list { max-height: 220px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 2px 10px; margin-bottom: 6px; }
+.solve .lock-list small { color: var(--muted); }
+.solve-result { border: 1px solid var(--accent); border-radius: 8px; padding: 8px 10px; }
+.lock-toggle { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; margin-bottom: 6px; }
+.lock-toggle input { width: auto; margin-top: 3px; }
+.canvas .lock { font-size: 13px; pointer-events: none; }

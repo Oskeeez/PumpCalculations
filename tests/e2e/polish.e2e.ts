@@ -84,7 +84,7 @@ describe('view options, find, help', () => {
     const find = s.page.getByLabel('Find a node or pipe by name');
     await find.fill('Tank C');
     await s.page.waitForSelector('.side .editor');
-    expect(await s.page.locator('.side input').first().inputValue()).toBe('Tank C');
+    expect(await s.page.locator('.side .editor input').first().inputValue()).toBe('Tank C');
     expect(await find.inputValue()).toBe('');
     await s.close();
   });

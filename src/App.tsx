@@ -18,6 +18,9 @@ import { Results } from './components/Results';
 import { ScenarioPanel } from './components/ScenarioPanel';
 import { SpeedPanel, type SpeedConfig } from './components/SpeedPanel';
 import { TargetsPanel } from './components/TargetsPanel';
+import { SolvePanel } from './components/SolvePanel';
+import { DEFAULT_SOLVE_SETTINGS, solveForTargets, type SolveOutcome, type SolveSettings } from './autosolve';
+import { usePersistentState } from './state/usePersistentState';
 import { TopBar } from './components/TopBar';
 import { EXPORT_THEME, SCREEN_THEME, SI_AXES, pumpChartSvg, CHART_H, CHART_W } from './curveChart';
 import { copyNodes, moveNodes, pasteClip, removeNodes, type Clip } from './clipboard';
@@ -59,6 +62,20 @@ export function App() {
   const [criteria, setCriteria] = useState<DesignCriteria>(loadCriteria);
   const [speedCfg, setSpeedCfg] = useState<SpeedConfig>({ pumpUid: '', minPct: 60, maxPct: 100, stepPct: 10 });
   const units = useMemo(() => makeUnits(unitSystem), [unitSystem]);
+  const [solveSettings, setSolveSettings] = usePersistentState<SolveSettings>('pipe-network-solve-settings', (saved) => {
+    const d = DEFAULT_SOLVE_SETTINGS as unknown as Record<string, unknown>;
+    const s = (saved && typeof saved === 'object' ? saved : {}) as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(d)) {
+      const dv = d[k];
+      const sv = s[k];
+      out[k] = dv && typeof dv === 'object' ? { ...(dv as object), ...(sv && typeof sv === 'object' ? (sv as object) : {}) } : typeof sv === typeof dv ? sv : dv;
+    }
+    return out as unknown as SolveSettings;
+  });
+  const [solveOutcome, setSolveOutcome] = useState<{ outcome: SolveOutcome; key: string }>();
+  const [solveRun, setSolveRun] = useState<{ solves: number; shortfall: number }>();
+  const solveCancel = useRef(false);
 
   const { drafts, setDrafts, draftTab, setDraftTab, acceptDraft, discardDraft } = useDrafts(boot.drafts ?? [], project, setProject, setMessage);
   const lib = useCurveLibrary(project, setProject, setMessage);
@@ -215,7 +232,7 @@ export function App() {
     const s = scenarios.find((x) => x.id === id);
     if (!s) return;
     const snap = JSON.parse(JSON.stringify(s.project)) as Omit<ProjectUI, 'images' | 'scenarios'>;
-    replaceProject({ ...snap, images: project.images, scenarios: project.scenarios, targets: project.targets, assumptions: project.assumptions, pumpCurves: project.pumpCurves, drafts }, `Loaded “${s.name}”.`);
+    replaceProject({ ...snap, locked: project.locked, images: project.images, scenarios: project.scenarios, targets: project.targets, assumptions: project.assumptions, pumpCurves: project.pumpCurves, drafts }, `Loaded “${s.name}”.`);
   };
   const deleteScenario = (id: string) => setProject((p) => ({ ...p, scenarios: (p.scenarios ?? []).filter((s) => s.id !== id) }));
   const renameScenario = (id: string, name: string) => setProject((p) => ({ ...p, scenarios: (p.scenarios ?? []).map((s) => (s.id === id ? { ...s, name } : s)) }), `scn:${id}`);
@@ -273,6 +290,44 @@ export function App() {
 
   const selNode = selection?.type === 'node' ? project.nodes.find((n) => n.uid === selection.uid) : undefined;
   const selEdge = selection?.type === 'edge' ? project.edges.find((e) => e.uid === selection.uid) : undefined;
+  // solve for me
+  const lockedSet = useMemo(() => new Set(project.locked ?? []), [project.locked]);
+  const toggleLock = (uid: string) => setProject((p) => {
+    const cur = new Set(p.locked ?? []);
+    if (cur.has(uid)) cur.delete(uid); else cur.add(uid);
+    return { ...p, locked: [...cur] };
+  }, `lock:${uid}`);
+  const runSolve = async () => {
+    if (solveRun) return;
+    solveCancel.current = false;
+    setSolveRun({ solves: 0, shortfall: 0 });
+    setSolveOutcome(undefined);
+    const startKey = key;
+    try {
+      const outcome = await solveForTargets(project, targets, solveSettings, lockedSet, {
+        onProgress: (i) => setSolveRun(i),
+        shouldCancel: () => solveCancel.current,
+      });
+      setSolveOutcome({ outcome, key: startKey });
+    } catch (e) {
+      setMessage({ kind: 'error', text: `Solve failed: ${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      setSolveRun(undefined);
+    }
+  };
+  const applySolve = () => {
+    if (!solveOutcome || solveOutcome.key !== key) return;
+    const next = solveOutcome.outcome.project;
+    setProject({ ...next, locked: project.locked });
+    setMessage({ kind: 'info', text: `Applied ${solveOutcome.outcome.changes.length} change${solveOutcome.outcome.changes.length === 1 ? '' : 's'}. Undo restores the old design.` });
+    setSolveOutcome(undefined);
+  };
+  const solveHighlight = useMemo(() => {
+    const m = new Map<string, 'added' | 'modified'>();
+    if (solveOutcome && solveOutcome.key === key) for (const c of solveOutcome.outcome.changes) m.set(c.uid, 'modified');
+    return m.size ? m : undefined;
+  }, [solveOutcome, key]);
+
   const pumpFit = selEdge?.kind === 'pump' ? computed.pumpCurves.find((c) => c.name === selEdge.name)?.headFitRmse : undefined;
   const hasSide = !!(selNode || selEdge);
 
@@ -332,6 +387,8 @@ export function App() {
         fitKey={epoch}
         focus={focus}
         pick={pick ?? undefined}
+        locked={lockedSet}
+        highlight={solveHighlight}
         onPick={(uid) => { const back = pick?.id.startsWith('speed') ? 'speed' : pick?.id.startsWith('pumpctl') ? 'properties' : 'targets'; pick?.apply(uid); setPick(null); setLayout((l) => activatePanel(l, back)); }}
         onPickCancel={() => setPick(null)}
       />
@@ -356,6 +413,12 @@ export function App() {
                 <h3>Properties</h3>
                 <p className="hint">Nothing selected. Click a node, pipe, valve or pump on the network to edit it here.</p>
               </section>
+            )}
+            {(selNode || selEdge) && (
+              <label className="lock-toggle" title="The Solve for me button will not change this item, or anything attached to a locked node.">
+                <input type="checkbox" checked={lockedSet.has((selNode ?? selEdge)!.uid)} onChange={() => toggleLock((selNode ?? selEdge)!.uid)} />
+                <span>🔒 Don't change this when solving for me</span>
+              </label>
             )}
             {selNode && <NodeEditor node={selNode} onChange={edit.updateNode} />}
             {selEdge?.kind === 'pipe' && <PipeEditor pipe={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} canvasLengthM={pipeLengthM(project, selEdge)} onChange={edit.updateEdge} />}
@@ -387,6 +450,26 @@ export function App() {
               />
             )}
           </div>
+        );
+      case 'solve':
+        return (
+          <SolvePanel
+            project={project}
+            statuses={targetStatuses}
+            settings={solveSettings}
+            onSettings={setSolveSettings}
+            locked={lockedSet}
+            onToggleLock={toggleLock}
+            onUnlockAll={() => setProject((p) => ({ ...p, locked: [] }), 'lock:all')}
+            running={solveRun}
+            onRun={() => void runSolve()}
+            onCancel={() => { solveCancel.current = true; }}
+            outcome={solveOutcome?.outcome}
+            stale={!!solveOutcome && solveOutcome.key !== key}
+            onApply={applySolve}
+            onDiscard={() => setSolveOutcome(undefined)}
+            onShowTargets={() => showPanel('targets')}
+          />
         );
       case 'pumpcurves':
         return <PumpCurvesPanel curves={lib.curves} pumps={pumpEdges} selectedPump={selEdge?.kind === 'pump' ? selEdge : undefined} focusId={lib.curveFocus} onChange={lib.updateCurves} onUse={lib.assignCurve} />;

@@ -94,6 +94,10 @@ A pump is fitted at rated speed with a least-squares quadratic through the head 
 - **Control valve**: `Cv = Q[gpm] / sqrt(dP[psi] / SG)` and `Kv = Q[m3/h] / sqrt(dP[bar] / SG)`, with `SG = rho / 999`. This is the flow coefficient needed fully open; it does not size for travel, noise or cavitation limits.
 - **Orifice plate**: solves `K_permanent(beta) = dP / (rho v^2 / 2)` for beta by Brent's method at the design flow, where `v` is the velocity in the pipe, and reports the bore, the bore velocity and the larger differential pressure a flow meter would read across the plate. It reports when no plate can give the requested drop, and warns when beta is outside 0.2 to 0.75 or the bore velocity exceeds 12 m/s.
 
+## Solve for me (no AI)
+
+`src/autosolve.ts` keeps every component and changes only what you allow (pipe diameters from a standard series, pump speed, impeller trim, throttle valve resistance, orifice bore, PRV/PSV/FCV settings, tank levels) until the targets pass. It is a deterministic search that uses the real solver: it tries each allowed change, keeps those that reduce the remaining shortfall, then pulls every change back to the smallest that still passes. Flow, pressure and velocity targets get a safety margin (default 3 %). Velocity limit and NPSH margin are protected where they hold now. A locked node freezes everything attached to it; a locked pipe, valve or pump is not changed. The result is a preview with the changes listed; applying it is a single undo step. It is a bounded search, not a proof: when it cannot meet a target it says so and reports the closest result. The solution tries are capped (default 600).
+
 ## Design alerts
 
 Velocity above the limit set in the top bar (0 = off) is flagged on pipes and valves. A pipe can carry an optional pressure rating (entered by you; the app has no pressure-class data): an alert is raised when the solved pressure at either end exceeds it. Warnings are also raised for sub-atmospheric pressure, pressure below vapour pressure, a closed check valve, transitional flow, a pump with no forward flow and a pump beyond its curve data.
