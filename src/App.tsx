@@ -19,6 +19,7 @@ import { ScenarioPanel } from './components/ScenarioPanel';
 import { SpeedPanel, type SpeedConfig } from './components/SpeedPanel';
 import { TargetsPanel } from './components/TargetsPanel';
 import { SolvePanel } from './components/SolvePanel';
+import { SizeForPanel } from './components/SizeForPanel';
 import { DEFAULT_SOLVE_SETTINGS, solveForTargets, type SolveOutcome, type SolveSettings } from './autosolve';
 import { usePersistentState } from './state/usePersistentState';
 import { TopBar } from './components/TopBar';
@@ -447,6 +448,15 @@ export function App() {
                 onPickNode={(apply) => startPick(`pumpctl:${selEdge.uid}`, 'node', `${selEdge.name} control node`, apply)}
                 pickActive={pick?.id === `pumpctl:${selEdge.uid}`}
                 solvedSpeed={computed.result?.pumps.find((x) => x.id === selEdge.name)?.speedRatio}
+              />
+            )}
+            {selEdge && (
+              <SizeForPanel
+                key={selEdge.uid}
+                project={project}
+                edge={selEdge}
+                locked={lockedSet}
+                onApply={(next, text) => { setProject({ ...next, locked: project.locked }); setMessage({ kind: 'info', text: `Applied: ${text}. Undo restores the old value.` }); }}
               />
             )}
           </div>

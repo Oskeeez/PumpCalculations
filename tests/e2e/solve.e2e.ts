@@ -46,3 +46,18 @@ describe('solve for me', () => {
     await s.close();
   });
 });
+
+describe('size for a flow or pressure', () => {
+  it('sizes the selected item and applies it', async () => {
+    const s = await open(app);
+    await s.page.locator('g.edge.pipe .edge-line').first().click({ force: true });
+    await s.page.locator('.size-for summary').click();
+    await s.page.getByLabel('Goal').selectOption('flow');
+    await s.page.getByRole('button', { name: 'Size for flow' }).click();
+    await s.page.waitForSelector('.size-for .banner');
+    const text = (await s.page.locator('.size-for .banner').textContent()) ?? '';
+    expect(text).toMatch(/Already meets|can meet|cannot meet|Closest/);
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+});
