@@ -14,6 +14,14 @@ export async function startApp(): Promise<App> {
   const url = server.resolvedUrls?.local[0];
   if (!url) throw new Error('The dev server did not report a URL.');
   const browser = await chromium.launch();
+  // A cold dev server optimises its dependencies on the first visit and can reload the page part-way through a test.
+  // Visit once now, and wait until it is quiet, so that tests start against a settled server.
+  const warm = await browser.newPage();
+  await warm.goto(url);
+  await warm.waitForSelector('svg.canvas', { timeout: 55_000 });
+  await warm.waitForLoadState('networkidle');
+  await warm.waitForTimeout(1500);
+  await warm.close();
   return { url, browser, close: async () => { await browser.close(); await server.close(); } };
 }
 
