@@ -377,3 +377,29 @@ body.ws-resizing-row { cursor: row-resize; user-select: none; }
 .app > .topbar { flex: 0 0 auto; }
 
 .build-id { color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; white-space: nowrap; }
+
+/* ===== canvas viewport, zoom controls, symbol size, pick mode ===== */
+.canvas-wrap { display: flex; flex-direction: column; overflow: hidden; position: relative; }
+.canvas-wrap .canvas { flex: 1 1 0; min-height: 0; width: 100%; height: auto; cursor: default; }
+.canvas-hint, .adjust-bar, .pick-bar { position: static; flex: 0 0 auto; }
+.canvas .edge-line { stroke-width: calc(4px * var(--sym, 1)); }
+.canvas .edge.pump .edge-line { stroke-width: calc(3px * var(--sym, 1)); }
+.canvas .edge.sel .edge-line, .canvas .edge.hl-added .edge-line, .canvas .edge.hl-modified .edge-line { stroke-width: calc(6px * var(--sym, 1)); }
+.canvas .edge-hit { stroke-width: calc(18px * var(--sym, 1)); }
+.canvas .node.hl-added .junction, .canvas .node.hl-added .tank, .canvas .node.hl-modified .junction, .canvas .node.hl-modified .tank { stroke-width: 4px; }
+.zoom-ctl { position: absolute; right: 12px; bottom: 12px; z-index: 5; display: flex; gap: 6px; align-items: center; padding: 6px; border-radius: 10px; background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--border); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); }
+.zoom-ctl button { width: 40px; height: 40px; padding: 0; font-size: 22px; line-height: 1; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+.zoom-ctl button.wide { width: auto; padding: 0 12px; font-size: 14px; }
+.zoom-ctl .zsep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 2px; }
+.zoom-ctl button:nth-last-child(-n+2) { font-size: 15px; }
+.pick-bar { display: flex; gap: 10px; align-items: center; padding: 6px 12px; background: var(--accent); color: #fff; font-size: 13px; }
+.pick-bar span { flex: 1; }
+.canvas.picking { cursor: crosshair; }
+.canvas.picking .node:not(.pickable), .canvas.picking .edge:not(.pickable) { opacity: 0.45; }
+.canvas.picking .node.pickable, .canvas.picking .edge.pickable { cursor: pointer; }
+.canvas.picking .node.pickable .junction, .canvas.picking .node.pickable .tank { stroke: var(--accent); stroke-width: 4px; }
+.canvas.picking .edge.pickable .edge-line { stroke: var(--accent); }
+.pick-btn { padding: 4px 8px; align-self: flex-end; }
+.pick-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.field-pick { display: flex; gap: 6px; align-items: flex-end; }
+.field-pick .field { flex: 1; min-width: 0; }

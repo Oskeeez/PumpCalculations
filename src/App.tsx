@@ -5,7 +5,7 @@ import { loadAiSettings, type AiSettings } from './ai/llm';
 import { evaluateTargets } from './ai/targets';
 import type { Draft } from './ai/types';
 import { compareScenarios, snapshotScenario, speedRatios, speedSweep } from './analysis';
-import { Canvas, type ConnectKind, type Selection, type Tool } from './components/Canvas';
+import { Canvas, type ConnectKind, type PickAccept, type PickSpec, type Selection, type Tool } from './components/Canvas';
 import { AiPanel } from './components/AiPanel';
 import { CanvasPanel } from './components/CanvasPanel';
 import { DraftsView } from './components/DraftsView';
@@ -100,6 +100,8 @@ export function App() {
   const [pending, setPending] = useState<string>();
   const [adjustImageId, setAdjustImageId] = useState<string>();
   const [adjustPick, setAdjustPick] = useState('');
+  const [epoch, setEpoch] = useState(0);
+  const [pick, setPick] = useState<(PickSpec & { id: string; apply: (uid: string) => void }) | null>(null);
   const [calib, setCalib] = useState<{ x: number; y: number }[]>([]);
   const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string }>();
   const [speedCfg, setSpeedCfg] = useState<SpeedConfig>({ pumpUid: '', minPct: 60, maxPct: 100, stepPct: 10 });
@@ -277,6 +279,8 @@ export function App() {
   };
 
   const replaceProject = (p: ProjectUI, text?: string) => {
+    setEpoch((n) => n + 1);
+    setPick(null);
     syncUidCounter(p);
     setDrafts(p.drafts ?? []);
     setDraftTab('compare');
@@ -362,6 +366,7 @@ export function App() {
         redo();
       } else if (typing) return;
       else if (ev.key === 'Escape') {
+        setPick(null);
         setAdjustImageId(undefined);
         setPending(undefined);
         setCalib([]);
@@ -406,6 +411,15 @@ export function App() {
     setMessage({ kind: 'info', text: `Saved “${c.name}” to the pump curve library.` });
   };
   const showPanel = (id: PanelId) => setLayout((l) => openPanel(l, id));
+  /** A selector in another panel asks the user to click a node / pump / line on the network. */
+  const startPick = (id: string, accept: PickAccept, label: string, apply: (uid: string) => void) => {
+    if (pick?.id === id) return setPick(null); // pressing the active button again cancels
+    setTool('select');
+    setPending(undefined);
+    setAdjustImageId(undefined);
+    setPick({ id, accept, label, apply });
+    showPanel('network');
+  };
 
   useEffect(() => {
     const t = setTimeout(() => saveLayout(layout), 300);
@@ -514,6 +528,10 @@ export function App() {
         onAdjustDone={() => setAdjustImageId(undefined)}
         onPending={setPending}
         onCalibPoint={(p) => setCalib((c) => (c.length >= 2 ? [p] : [...c, p]))}
+        fitKey={epoch}
+        pick={pick ?? undefined}
+        onPick={(uid) => { const back = pick?.id.startsWith('speed') ? 'speed' : 'targets'; pick?.apply(uid); setPick(null); setLayout((l) => activatePanel(l, back)); }}
+        onPickCancel={() => setPick(null)}
       />
     </div>
   );
@@ -558,7 +576,7 @@ export function App() {
       case 'targets':
         return (
           <>
-            <TargetsPanel project={project} targets={targets} statuses={targetStatuses} onChange={(t) => setProject((p) => ({ ...p, targets: t }), 'targets')} />
+            <TargetsPanel project={project} targets={targets} statuses={targetStatuses} onChange={(t) => setProject((p) => ({ ...p, targets: t }), 'targets')} pickId={pick?.id} onPick={startPick} />
             {(project.assumptions ?? []).length > 0 && (
               <>
                 <h4>Assumptions from AI-built parts ({project.assumptions!.length})</h4>
@@ -590,7 +608,7 @@ export function App() {
           />
         );
       case 'speed':
-        return <SpeedPanel pumps={pumpEdges} config={{ ...speedCfg, pumpUid: speedPumpUid }} onConfig={setSpeedCfg} sweep={sweep} />;
+        return <SpeedPanel pumps={pumpEdges} config={{ ...speedCfg, pumpUid: speedPumpUid }} onConfig={setSpeedCfg} sweep={sweep} pickId={pick?.id} onPick={startPick} />;
       case 'scenarios':
         return <ScenarioPanel scenarios={scenarios} comparison={comparison} onSave={saveScenario} onLoad={loadScenario} onDelete={deleteScenario} onRename={renameScenario} />;
       case 'view3d':

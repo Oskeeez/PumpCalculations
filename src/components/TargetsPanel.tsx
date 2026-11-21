@@ -1,5 +1,7 @@
+import { useRef } from 'react';
 import type { Target, TargetStatus } from '../ai/types';
-import { newTargetId } from '../ai/targets';
+import type { PickAccept } from './Canvas';
+import { describeTarget, newTargetId } from '../ai/targets';
 import type { HydraulicProject } from '../model';
 import type { Quantity } from '../units';
 import { NumField } from './NumField';
@@ -9,6 +11,10 @@ interface Props {
   targets: Target[];
   statuses: TargetStatus[];
   onChange: (t: Target[]) => void;
+  /** Id of the selector currently waiting for a click on the network. */
+  pickId?: string;
+  /** Ask the user to click a node / pump / line on the network; `apply` receives its uid. */
+  onPick: (id: string, accept: PickAccept, label: string, apply: (uid: string) => void) => void;
 }
 
 const TYPES: { id: Target['type']; label: string }[] = [
@@ -19,11 +25,14 @@ const TYPES: { id: Target['type']; label: string }[] = [
   { id: 'npsh', label: 'NPSH margin' },
 ];
 
-export function TargetsPanel({ project, targets, statuses, onChange }: Props) {
+export function TargetsPanel({ project, targets, statuses, onChange, pickId, onPick }: Props) {
   const nodes = project.nodes;
   const pumps = project.edges.filter((e) => e.kind === 'pump');
   const lines = project.edges.filter((e) => e.kind === 'pipe' || e.kind === 'valve');
-  const set = (t: Target) => onChange(targets.map((x) => (x.id === t.id ? t : x)));
+  // a pick can finish after other edits, so always work from the latest list
+  const latest = useRef(targets);
+  latest.current = targets;
+  const set = (t: Target) => onChange(latest.current.map((x) => (x.id === t.id ? t : x)));
   const add = (type: Target['type']) => {
     const id = newTargetId();
     const node = nodes.find((n) => n.kind === 'junction') ?? nodes[0];
@@ -39,22 +48,32 @@ export function TargetsPanel({ project, targets, statuses, onChange }: Props) {
   };
   const stat = (id: string) => statuses.find((s) => s.targetId === id);
 
+  /** The "choose on the network" button beside a drop-down. */
+  const pickBtn = (id: string, accept: PickAccept, label: string, apply: (uid: string) => void) => (
+    <button className={`pick-btn ${pickId === id ? 'active' : ''}`} aria-pressed={pickId === id} title={`Choose by clicking on the network${accept === 'node' ? ' (a node)' : accept === 'pump' ? ' (a pump)' : ' (a pipe or valve)'}`} onClick={() => onPick(id, accept, label, apply)}>◎ Pick</button>
+  );
   const nodeSelect = (t: Extract<Target, { nodeUid: string }>) => (
-    <label className="field">
-      <span>Node</span>
-      <select value={t.nodeUid} onChange={(e) => set({ ...t, nodeUid: e.target.value })}>
-        {nodes.map((n) => <option key={n.uid} value={n.uid}>{n.name}</option>)}
-      </select>
-    </label>
+    <div className="field-pick">
+      <label className="field">
+        <span>Node</span>
+        <select value={t.nodeUid} onChange={(e) => set({ ...t, nodeUid: e.target.value })}>
+          {nodes.map((n) => <option key={n.uid} value={n.uid}>{n.name}</option>)}
+        </select>
+      </label>
+      {pickBtn(`${t.id}:node`, 'node', describeTarget(project, t), (uid) => set({ ...t, nodeUid: uid }))}
+    </div>
   );
   const pumpSelect = (t: Extract<Target, { pumpUid: string }>, all: boolean) => (
-    <label className="field">
-      <span>Pump</span>
-      <select value={t.pumpUid} onChange={(e) => set({ ...t, pumpUid: e.target.value })}>
-        {all && <option value="all">All pumps</option>}
-        {pumps.map((n) => <option key={n.uid} value={n.uid}>{n.name}</option>)}
-      </select>
-    </label>
+    <div className="field-pick">
+      <label className="field">
+        <span>Pump</span>
+        <select value={t.pumpUid} onChange={(e) => set({ ...t, pumpUid: e.target.value })}>
+          {all && <option value="all">All pumps</option>}
+          {pumps.map((n) => <option key={n.uid} value={n.uid}>{n.name}</option>)}
+        </select>
+      </label>
+      {pickBtn(`${t.id}:pump`, 'pump', describeTarget(project, t), (uid) => set({ ...t, pumpUid: uid }))}
+    </div>
   );
   const optNum = (label: string, q: Quantity | undefined, unit: string | undefined, value: number | undefined, on: (v: number | undefined) => void) => (
     <div className="field opt">
@@ -85,12 +104,15 @@ export function TargetsPanel({ project, targets, statuses, onChange }: Props) {
                 {optNum('Maximum', 'pressure', undefined, t.maxKPaG, (v) => set({ ...t, maxKPaG: v }))}
               </>}
               {t.type === 'velocity' && <>
-                <label className="field"><span>Applies to</span>
-                  <select value={t.scope} onChange={(e) => set({ ...t, scope: e.target.value })}>
-                    <option value="all">All pipes and valves</option>
-                    {lines.map((n) => <option key={n.uid} value={n.uid}>{n.name}</option>)}
-                  </select>
-                </label>
+                <div className="field-pick">
+                  <label className="field"><span>Applies to</span>
+                    <select value={t.scope} onChange={(e) => set({ ...t, scope: e.target.value })}>
+                      <option value="all">All pipes and valves</option>
+                      {lines.map((n) => <option key={n.uid} value={n.uid}>{n.name}</option>)}
+                    </select>
+                  </label>
+                  {pickBtn(`${t.id}:line`, 'line', describeTarget(project, t), (uid) => set({ ...t, scope: uid }))}
+                </div>
                 <NumField label="Max velocity" q="velocity" value={t.maxMps} onChange={(v) => set({ ...t, maxMps: v })} />
                 {optNum('Min velocity', 'velocity', undefined, t.minMps, (v) => set({ ...t, minMps: v }))}
               </>}
