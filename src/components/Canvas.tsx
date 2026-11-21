@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { useState, type PointerEvent as RPointerEvent } from 'react';
 import { planDistancePx } from '../geometry';
 import type { EdgeUI, InsertKind, NodeKind, NodeUI, ProjectUI } from '../model';
 import type { SystemResult } from '../solver';
 import { useUnits } from '../units';
-import { contentBounds, fitView, panBy, viewBox, zoomAbout, type Size, type View } from '../viewport';
+import { contentBounds } from '../viewport';
+import { edgeGeometry, pairKey } from './canvasGeometry';
+import { useViewport } from './useViewport';
+import { SYM_MAX, SYM_MIN, ZoomControls } from './ZoomControls';
 
 export type Tool = 'select' | 'tank' | 'junction' | 'pipe' | 'pump' | 'valve' | 'orifice' | 'scale';
 export type Selection = { type: 'node' | 'edge'; uid: string } | null;
@@ -19,8 +22,6 @@ export interface PickSpec {
 
 const GRID = 10;
 const SYM_KEY = 'pipe-network-symbol-scale';
-const SYM_MIN = 0.5;
-const SYM_MAX = 3;
 
 interface Props {
   project: ProjectUI;
@@ -100,41 +101,24 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
   const U = useUnits();
   const W = project.canvasW;
   const H = project.canvasH;
-  const svgRef = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<{ kind: 'node' | 'image'; id: string; dx: number; dy: number } | null>(null);
   const [link, setLink] = useState<{ kind: ConnectKind; from: string; sx: number; sy: number; x: number; y: number; moved: boolean; target?: string } | null>(null);
-  const [size, setSize] = useState<Size>({ w: 0, h: 0 });
-  const [view, setView] = useState<View>({ cx: W / 2, cy: H / 2, scale: 1 });
   const [sym, setSym] = useState(loadSym);
-  const pan = useRef<{ sx: number; sy: number; cx: number; cy: number; moved: boolean } | null>(null);
   const nodeById = new Map(project.nodes.map((n) => [n.uid, n]));
   const isConnect = tool === 'pipe' || tool === 'pump' || tool === 'valve' || tool === 'orifice';
-
-  // pixel size of the canvas, kept up to date as tiles are resized
-  useEffect(() => {
-    const el = svgRef.current;
-    if (!el) return;
-    const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight });
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    measure();
-    return () => ro.disconnect();
-  }, []);
-
-  const fit = (symbolScale = sym) => {
-    if (size.w > 0 && size.h > 0) setView(fitView(contentBounds(project.nodes, project.images, { w: W, h: H }, symbolScale), size, 48));
-  };
-
-  // fit once the size is known, and again whenever a different project is loaded
-  const fitted = useRef<number | undefined>(undefined);
-  useEffect(() => {
-    const key = fitKey ?? 0;
-    if (size.w > 0 && size.h > 0 && fitted.current !== key) {
-      fitted.current = key;
-      fit();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.w, size.h, fitKey]);
+  const vp = useViewport({
+    canvas: { w: W, h: H },
+    bounds: (symbolScale) => contentBounds(project.nodes, project.images, { w: W, h: H }, symbolScale),
+    symbolScale: sym,
+    fitKey,
+    // while an image is being adjusted, the wheel zooms the image, not the view
+    wheelOverride: (p, zoomIn) => {
+      if (!adjustImageId) return false;
+      onZoomImage(adjustImageId, zoomIn ? 1.08 : 1 / 1.08, p.x, p.y);
+      return true;
+    },
+  });
+  const { svgRef, toSvg, zoomBy, fit } = vp;
 
   const changeSym = (f: number) => {
     const next = clampSym(Math.round(sym * f * 100) / 100);
@@ -146,40 +130,6 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     }
   };
 
-  /** Pointer position in canvas units, via the SVG's own transform so it is exact at any zoom. */
-  const toSvg = (e: { clientX: number; clientY: number }) => {
-    const svg = svgRef.current as SVGSVGElement;
-    const m = svg.getScreenCTM();
-    if (m) {
-      const pt = svg.createSVGPoint();
-      pt.x = e.clientX;
-      pt.y = e.clientY;
-      const q = pt.matrixTransform(m.inverse());
-      return { x: q.x, y: q.y };
-    }
-    const r = svg.getBoundingClientRect();
-    return { x: view.cx + (e.clientX - r.left - r.width / 2) / view.scale, y: view.cy + (e.clientY - r.top - r.height / 2) / view.scale };
-  };
-
-  // Wheel: zoom the image being adjusted, else zoom the view about the pointer. Needs a non-passive listener so the page never scrolls.
-  const live = useRef({ adjustImageId, onZoomImage, toSvg });
-  live.current = { adjustImageId, onZoomImage, toSvg };
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const onWheel = (ev: WheelEvent) => {
-      ev.preventDefault();
-      const p = live.current.toSvg(ev);
-      const f = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
-      const id = live.current.adjustImageId;
-      if (id) live.current.onZoomImage(id, ev.deltaY < 0 ? 1.08 : 1 / 1.08, p.x, p.y);
-      else setView((v) => zoomAbout(v, f, p.x, p.y));
-    };
-    svg.addEventListener('wheel', onWheel, { passive: false });
-    return () => svg.removeEventListener('wheel', onWheel);
-  }, []);
-
-  const zoomBy = (f: number) => setView((v) => zoomAbout(v, f, v.cx, v.cy));
 
   const nodeAt = (e: { clientX: number; clientY: number }): string | undefined => {
     for (const el of document.elementsFromPoint(e.clientX, e.clientY)) {
@@ -189,10 +139,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     return undefined;
   };
 
-  const startPan = (e: RPointerEvent) => {
-    pan.current = { sx: e.clientX, sy: e.clientY, cx: view.cx, cy: view.cy, moved: false };
-    svgRef.current?.setPointerCapture(e.pointerId);
-  };
+  const startPan = vp.beginPan;
 
   /** Tools stay active after each placement. Escape, right-click, the tool button again, or another tool ends it. */
   const onBackgroundDown = (e: RPointerEvent) => {
@@ -253,14 +200,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
   };
 
   const onMove = (e: RPointerEvent) => {
-    if (pan.current) {
-      const p = pan.current;
-      const dx = e.clientX - p.sx;
-      const dy = e.clientY - p.sy;
-      if (!p.moved && Math.hypot(dx, dy) > 3) p.moved = true;
-      if (p.moved) setView((v) => panBy({ ...v, cx: p.cx, cy: p.cy }, dx, dy));
-      return;
-    }
+    if (vp.movePan(e)) return;
     if (drag) {
       const p = toSvg(e);
       if (drag.kind === 'node') onMoveNode(drag.id, snap(p.x + drag.dx), snap(p.y + drag.dy));
@@ -268,14 +208,14 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     } else if (link) {
       const p = toSvg(e);
       const target = nodeAt(e);
-      setLink({ ...link, x: p.x, y: p.y, moved: link.moved || Math.hypot(p.x - link.sx, p.y - link.sy) * view.scale > 6, target: target && target !== link.from ? target : undefined });
+      setLink({ ...link, x: p.x, y: p.y, moved: link.moved || Math.hypot(p.x - link.sx, p.y - link.sy) * vp.view.scale > 6, target: target && target !== link.from ? target : undefined });
     }
   };
 
   const onUp = (e: RPointerEvent) => {
-    if (pan.current) {
-      if (!pan.current.moved) onSelect(null); // a plain click on empty space deselects; a drag only pans
-      pan.current = null;
+    const panned = vp.endPan();
+    if (panned) {
+      if (panned === 'click') onSelect(null); // a plain click on empty space deselects; a drag only pans
       return;
     }
     if (link && link.from === '') {
@@ -309,7 +249,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
   const pairCount = new Map<string, number>();
   const pairIndex = new Map<string, number>();
   for (const e of project.edges) {
-    const key = [e.from, e.to].sort().join('|');
+    const key = pairKey(e.from, e.to);
     pairIndex.set(e.uid, pairCount.get(key) ?? 0);
     pairCount.set(key, (pairCount.get(key) ?? 0) + 1);
   }
@@ -320,23 +260,10 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     const a = nodeById.get(e.from);
     const b = nodeById.get(e.to);
     if (!a || !b) return null;
-    const key = [e.from, e.to].sort().join('|');
-    const n = pairCount.get(key) ?? 1;
-    const off = ((pairIndex.get(e.uid) ?? 0) - (n - 1) / 2) * 46;
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const len = Math.hypot(dx, dy) || 1;
-    const sgn = e.from < e.to ? 1 : -1;
-    const nx = (-dy / len) * sgn;
-    const ny = (dx / len) * sgn;
-    const cx = (a.x + b.x) / 2 + nx * off * 2;
-    const cy = (a.y + b.y) / 2 + ny * off * 2;
-    const mx = 0.25 * a.x + 0.5 * cx + 0.25 * b.x;
-    const my = 0.25 * a.y + 0.5 * cy + 0.25 * b.y;
+    const { path, mx, my, dirDeg } = edgeGeometry(e.from, e.to, a, b, pairIndex.get(e.uid) ?? 0, pairCount.get(pairKey(e.from, e.to)) ?? 1);
     const pr = e.kind === 'pipe' ? result?.pipes.find((x) => x.id === e.name) : e.kind === 'valve' ? result?.valves.find((x) => x.id === e.name) : result?.pumps.find((x) => x.id === e.name);
     const q = pr?.flowM3s ?? 0;
     const flowing = Math.abs(q) > 1e-9;
-    const dirDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
     const ang = dirDeg + (q < 0 ? 180 : 0);
     const sel = selection?.type === 'edge' && selection.uid === e.uid;
     const closed = e.kind === 'valve' && (!e.open || (pr !== undefined && 'status' in pr && (pr.status === 'check-closed' || pr.status === 'closed')));
@@ -350,7 +277,6 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
           : pr && e.kind === 'valve' && 'pressureDropPa' in pr
             ? `Δp ${U.fu('pressure', pr.pressureDropPa / 1000, 1)}`
             : '';
-    const path = `M${a.x},${a.y} Q${cx},${cy} ${b.x},${b.y}`;
     return (
       <g
         key={e.uid}
@@ -462,7 +388,6 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
   ) : null;
   const hint = readOnly || pick ? undefined : HINTS[tool];
   const from = link ? (link.from ? nodeById.get(link.from) : { x: link.sx, y: link.sy }) : undefined;
-  const ready = size.w > 0 && size.h > 0;
   return (
     <div className={`canvas-wrap ${pick ? 'picking' : ''}`}>
       {pick && (
@@ -487,11 +412,11 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
         ref={svgRef}
         className={`canvas tool-${tool} ${adjustImageId ? 'adjusting' : ''} ${pick ? 'picking' : ''}`}
         style={{ ['--sym' as string]: sym }}
-        viewBox={ready ? viewBox(view, size) : `0 0 ${W} ${H}`}
+        viewBox={vp.viewBoxString}
         onPointerDown={(e) => { if (e.button === 1) { e.preventDefault(); startPan(e); } }}
         onPointerMove={onMove}
         onPointerUp={onUp}
-        onPointerCancel={() => { setDrag(null); setLink(null); pan.current = null; }}
+        onPointerCancel={() => { setDrag(null); setLink(null); vp.cancelPan(); }}
         onContextMenu={(e) => { if (tool !== 'select' && !readOnly) { e.preventDefault(); onPending(undefined); onTool('select'); } }}
         role="application"
         aria-label="Pipe network canvas"
@@ -540,14 +465,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
         )}
         {nodeEls}
       </svg>
-      <div className="zoom-ctl" role="group" aria-label="Zoom and symbol size" onPointerDown={(e) => e.stopPropagation()}>
-        <button aria-label="Zoom in" title="Zoom in (or scroll up over the network)" onClick={() => zoomBy(1.3)}>+</button>
-        <button aria-label="Zoom out" title="Zoom out (or scroll down over the network)" onClick={() => zoomBy(1 / 1.3)}>−</button>
-        <button aria-label="Fit the network to the window" title="Fit the whole network in the window" className="wide" onClick={() => fit()}>Fit</button>
-        <span className="zsep" />
-        <button aria-label="Smaller symbols" title="Make nodes, valves, pumps and labels smaller. The zoom does not change." onClick={() => changeSym(1 / 1.2)} disabled={sym <= SYM_MIN + 1e-9}>A−</button>
-        <button aria-label="Larger symbols" title="Make nodes, valves, pumps and labels larger. The zoom does not change." onClick={() => changeSym(1.2)} disabled={sym >= SYM_MAX - 1e-9}>A+</button>
-      </div>
+      <ZoomControls onZoom={zoomBy} onFit={() => fit()} symbolScale={sym} onSymbolScale={changeSym} />
     </div>
   );
 }

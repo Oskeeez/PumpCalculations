@@ -59,3 +59,32 @@ describe('viewport', () => {
     expect(contentBounds([], [], { w: 1100, h: 620 })).toEqual({ minX: 0, minY: 0, maxX: 1100, maxY: 620 });
   });
 });
+
+import { FAN_SPACING, edgeGeometry, pairKey } from '../src/components/canvasGeometry';
+
+describe('edge geometry', () => {
+  const a = { x: 0, y: 0 };
+  const b = { x: 100, y: 0 };
+
+  it('a single edge is straight, with its midpoint halfway along', () => {
+    const g = edgeGeometry('a', 'b', a, b, 0, 1);
+    expect(g.mx).toBeCloseTo(50, 9);
+    expect(g.my).toBeCloseTo(0, 9);
+    expect(g.dirDeg).toBeCloseTo(0, 9);
+  });
+
+  it('parallel edges are spread evenly either side of the line', () => {
+    const ys = [0, 1, 2].map((i) => edgeGeometry('a', 'b', a, b, i, 3).my);
+    expect(ys[1]).toBeCloseTo(0, 9);
+    expect(ys[0]).toBeCloseTo(-ys[2], 9);
+    expect(Math.abs(ys[0])).toBeCloseTo(FAN_SPACING, 9); // quadratic midpoint is half the control offset (2 x spacing)
+  });
+
+  it('the pair key does not depend on direction', () => {
+    expect(pairKey('x', 'y')).toBe(pairKey('y', 'x'));
+  });
+
+  it('a vertical edge points down the screen', () => {
+    expect(edgeGeometry('a', 'b', a, { x: 0, y: 50 }, 0, 1).dirDeg).toBeCloseTo(90, 9);
+  });
+});
