@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { planDistancePx } from '../geometry';
-import { loadImageFile } from '../images';
+import { layerFromFile } from '../images';
 import type { ImageLayer } from '../model';
 import { NumField } from './NumField';
 
@@ -36,19 +36,7 @@ export function CanvasPanel(p: Props) {
     if (!file) return;
     setError(undefined);
     try {
-      const img = await loadImageFile(file);
-      const k = Math.min(1, p.canvasW / img.width, p.canvasH / img.height);
-      p.onAddImage({
-        id: `img${Date.now()}`,
-        name: file.name,
-        dataUrl: img.dataUrl,
-        x: 0,
-        y: 0,
-        width: Math.round(img.width * k),
-        height: Math.round(img.height * k),
-        opacity: 0.6,
-        locked: false,
-      });
+      p.onAddImage(await layerFromFile(file, p.canvasW, p.canvasH));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

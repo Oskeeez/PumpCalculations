@@ -26,6 +26,8 @@ interface Props {
   onConnect: (kind: ConnectKind, from: string, to: string) => void;
   /** Drag (or click) from a node into empty space: the end of the new pipe/pump/valve becomes a new node there. */
   onConnectNew: (kind: ConnectKind, from: string, x: number, y: number) => void;
+  /** Drag across blank canvas: new start node, and a new end node (or the existing node the drag ended on). */
+  onConnectBlank: (kind: ConnectKind, a: { x: number; y: number }, b: { x: number; y: number } | { uid: string }) => void;
   /** Place a pump, valve or orifice on its own at a point of empty canvas. */
   onPlace: (kind: 'pump' | 'valve' | 'orifice', x: number, y: number) => void;
   /** Swap the flow direction of an element. */
@@ -52,15 +54,15 @@ const snap = (v: number) => Math.round(v / GRID) * GRID;
 const HINTS: Partial<Record<Tool, string>> = {
   tank: 'Click empty space to place a tank, or click a pipe to split it with a tank',
   junction: 'Click empty space to place a junction, or click a pipe to split it',
-  pipe: 'Drag from node to node',
-  valve: 'Click a pipe to insert a valve, click empty space to place one, or drag from node to node',
-  orifice: 'Click a pipe to insert an orifice plate, click empty space to place one, or drag from node to node',
-  pump: 'Click a pipe to insert a pump, click empty space to place one, or drag from suction to discharge node',
+  pipe: 'Drag from node to node, or drag across blank space to create both ends',
+  valve: 'Click a pipe to insert a valve, click empty space to place one, or drag to draw one between two nodes',
+  orifice: 'Click a pipe to insert an orifice plate, click empty space to place one, or drag to draw one between two nodes',
+  pump: 'Click a pipe to insert a pump, click empty space to place one, or drag from suction to discharge',
   scale: 'Click two points a known distance apart',
 };
 
 /** Network canvas. Select mode is the default; tools return to it after one use or a click on the background. */
-export function Canvas({ project, result, selection, tool, pending, calib, onSelect, onTool, onAddNode, onMoveNode, onMoveImage, onConnect, onInsert, onConnectNew, onPlace, onReverse, adjustImageId, onZoomImage, onAdjustDone, onPending, onCalibPoint, highlight, removed, readOnly }: Props) {
+export function Canvas({ project, result, selection, tool, pending, calib, onSelect, onTool, onAddNode, onMoveNode, onMoveImage, onConnect, onInsert, onConnectNew, onConnectBlank, onPlace, onReverse, adjustImageId, onZoomImage, onAdjustDone, onPending, onCalibPoint, highlight, removed, readOnly }: Props) {
   const U = useUnits();
   const W = project.canvasW;
   const H = project.canvasH;
@@ -80,15 +82,30 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
       const id = zoomRef.current.adjustImageId;
       if (!id) return;
       ev.preventDefault();
-      const r = svg.getBoundingClientRect();
-      zoomRef.current.onZoomImage(id, ev.deltaY < 0 ? 1.08 : 1 / 1.08, ((ev.clientX - r.left) * W) / r.width, ((ev.clientY - r.top) * H) / r.height);
+      const m = svg.getScreenCTM();
+      if (!m) return;
+      const pt = svg.createSVGPoint();
+      pt.x = ev.clientX;
+      pt.y = ev.clientY;
+      const q = pt.matrixTransform(m.inverse());
+      zoomRef.current.onZoomImage(id, ev.deltaY < 0 ? 1.08 : 1 / 1.08, q.x, q.y);
     };
     svg.addEventListener('wheel', onWheel, { passive: false });
     return () => svg.removeEventListener('wheel', onWheel);
   }, [adjustImageId, W, H]);
 
+  /** Pointer position in canvas units. Uses the SVG's own transform so it stays exact however the canvas is scaled or letterboxed. */
   const toSvg = (e: { clientX: number; clientY: number }) => {
-    const r = (svgRef.current as SVGSVGElement).getBoundingClientRect();
+    const svg = svgRef.current as SVGSVGElement;
+    const m = svg.getScreenCTM();
+    if (m) {
+      const pt = svg.createSVGPoint();
+      pt.x = e.clientX;
+      pt.y = e.clientY;
+      const q = pt.matrixTransform(m.inverse());
+      return { x: q.x, y: q.y };
+    }
+    const r = svg.getBoundingClientRect();
     return { x: ((e.clientX - r.left) * W) / r.width, y: ((e.clientY - r.top) * H) / r.height };
   };
   const nodeAt = (e: { clientX: number; clientY: number }): string | undefined => {
@@ -114,8 +131,10 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
       // first node picked, then a click in empty space: the end becomes a new node there
       onConnectNew(tool as ConnectKind, pending, snap(p.x), snap(p.y));
       onPending(undefined);
-    } else if (tool === 'pump' || tool === 'valve' || tool === 'orifice') {
-      onPlace(tool, snap(p.x), snap(p.y));
+    } else if (isConnect) {
+      // press on blank canvas and drag: both ends become new nodes. A plain click places a pump / valve / orifice on its own.
+      setLink({ kind: tool as ConnectKind, from: '', sx: p.x, sy: p.y, x: p.x, y: p.y, moved: false });
+      svgRef.current?.setPointerCapture(e.pointerId);
     }
   };
 
@@ -162,7 +181,17 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
   };
 
   const onUp = (e: RPointerEvent) => {
-    if (link) {
+    if (link && link.from === '') {
+      // started on blank canvas
+      const target = nodeAt(e);
+      const p = toSvg(e);
+      const a = { x: snap(link.sx), y: snap(link.sy) };
+      if (link.moved) {
+        onConnectBlank(link.kind, a, target ? { uid: target } : { x: Math.max(30, Math.min(W - 30, snap(p.x))), y: Math.max(30, Math.min(H - 40, snap(p.y))) });
+      } else if (link.kind !== 'pipe') {
+        onPlace(link.kind, a.x, a.y);
+      }
+    } else if (link) {
       const target = nodeAt(e);
       if (target && target !== link.from) {
         onConnect(link.kind, link.from, target);
@@ -321,7 +350,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     </g>
   ) : null;
   const hint = readOnly ? undefined : HINTS[tool];
-  const from = link ? nodeById.get(link.from) : undefined;
+  const from = link ? (link.from ? nodeById.get(link.from) : { x: link.sx, y: link.sy }) : undefined;
   return (
     <div className="canvas-wrap">
       {adjustImageId && !readOnly && (() => {

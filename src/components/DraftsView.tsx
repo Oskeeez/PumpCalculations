@@ -153,6 +153,7 @@ function DraftDetail({ main, draft, column, onAccept, onDiscard }: { main: Proje
             onInsert={() => {}}
             onPlace={() => {}}
             onConnectNew={() => {}}
+            onConnectBlank={() => {}}
             onReverse={() => {}}
             onZoomImage={() => {}}
             onPending={() => {}}

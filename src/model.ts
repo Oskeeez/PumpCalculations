@@ -291,6 +291,23 @@ export function connectToNewNode(p: ProjectUI, kind: ConnectKindM, fromUid: stri
 }
 
 /**
+ * Drag across blank canvas with a pipe/pump/valve/orifice tool: a new junction at the start point, and either another new junction
+ * at the end point or, when the drag ends on an existing node, that node. The element joins them, start to end.
+ */
+export function connectBlank(p: ProjectUI, kind: ConnectKindM, a: { x: number; y: number }, b: { x: number; y: number } | { uid: string }, diameterMm?: number): { project: ProjectUI; selectUid: string } {
+  const names = p.nodes.map((n) => n.name);
+  const endNode = 'uid' in b ? p.nodes.find((n) => n.uid === b.uid) : undefined;
+  if ('uid' in b && !endNode) throw new Error('The end node no longer exists.');
+  const start = newNode('junction', a.x, a.y, names);
+  start.elevationM = endNode ? endNode.elevationM : 0;
+  names.push(start.name);
+  const end = endNode ?? newNode('junction', (b as { x: number }).x, (b as { y: number }).y, names);
+  if (!endNode) end.elevationM = start.elevationM;
+  const e = makeEdge(kind, start.uid, end.uid, p.edges.map((q) => q.name), diameterMm);
+  return { project: { ...p, nodes: endNode ? [...p.nodes, start] : [...p.nodes, start, end], edges: [...p.edges, e] }, selectUid: e.uid };
+}
+
+/**
  * Place a pump, valve or orifice on its own, anywhere on the canvas: two new junctions 90 px apart (suction on the left,
  * discharge on the right) joined by the element. Connect those nodes to the rest of the network afterwards.
  */

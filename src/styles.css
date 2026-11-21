@@ -45,7 +45,7 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; }
-.app { max-width: 1280px; margin: 0 auto; padding: 16px; }
+.app { max-width: none; margin: 0; padding: 12px 14px; }
 header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; justify-content: space-between; margin-bottom: 12px; }
 h1 { font-size: 20px; margin: 0; }
 h3 { margin: 0 0 8px; font-size: 15px; }
@@ -143,8 +143,9 @@ tr.bad td { color: var(--err-fg); font-weight: 600; }
 @media (max-width: 1000px) { .below { grid-template-columns: minmax(0, 1fr); } }
 tbody tr[onclick], .results tbody tr { cursor: pointer; }
 .results tbody tr:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.canvas { width: 100%; height: auto; }
-.canvas-wrap { max-height: none; }
+.canvas { width: 100%; height: 100%; }
+.canvas-wrap { max-height: none; height: calc(100vh - 300px); min-height: 440px; }
+.side { max-height: calc(100vh - 300px); }
 .valve-icon { fill: var(--panel); stroke: var(--fg); stroke-width: 2; stroke-linejoin: round; }
 .valve-icon.closed { stroke: var(--err-fg); fill: var(--err-bg); }
 .valve-check { stroke: var(--fg); stroke-width: 3; }

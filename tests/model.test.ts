@@ -208,3 +208,29 @@ describe('placing elements', () => {
     expect(makeEdge('orifice', 'a', 'b', [], 80)).toMatchObject({ kind: 'valve', lossType: 'orifice', diameterMm: 80 });
   });
 });
+
+import { connectBlank } from '../src/model';
+
+describe('drag across blank canvas', () => {
+  it('creates two new nodes and a pipe between them, start to end', () => {
+    const p = defaultProject();
+    const { project, selectUid } = connectBlank(p, 'pipe', { x: 100, y: 500 }, { x: 300, y: 500 });
+    expect(project.nodes).toHaveLength(p.nodes.length + 2);
+    expect(project.edges).toHaveLength(p.edges.length + 1);
+    const e = project.edges.find((x) => x.uid === selectUid)!;
+    const a = project.nodes.find((n) => n.uid === e.from)!;
+    const b = project.nodes.find((n) => n.uid === e.to)!;
+    expect([a.x, a.y, b.x, b.y]).toEqual([100, 500, 300, 500]);
+    expect(e.kind).toBe('pipe');
+  });
+  it('ending the drag on an existing node reuses it and only adds the start node', () => {
+    const p = defaultProject();
+    const j2 = p.nodes.find((n) => n.name === 'J2')!;
+    const { project, selectUid } = connectBlank(p, 'pump', { x: 100, y: 500 }, { uid: j2.uid });
+    expect(project.nodes).toHaveLength(p.nodes.length + 1);
+    const e = project.edges.find((x) => x.uid === selectUid)!;
+    expect(e.to).toBe(j2.uid);
+    expect(e.kind).toBe('pump');
+    expect(() => connectBlank(p, 'pipe', { x: 0, y: 0 }, { uid: 'nope' })).toThrow(/no longer exists/);
+  });
+});

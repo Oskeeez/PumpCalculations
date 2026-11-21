@@ -18,6 +18,7 @@ import { TargetsPanel } from './components/TargetsPanel';
 import { SpeedPanel, type SpeedConfig } from './components/SpeedPanel';
 import { EXPORT_THEME, SCREEN_THEME, SI_AXES, pumpChartSvg, svgToPngBase64, CHART_H, CHART_W } from './curveChart';
 import { calibrate } from './geometry';
+import { layerFromFile } from './images';
 import { useHistory } from './history';
 import {
   blankProject,
@@ -27,6 +28,7 @@ import {
   insertOnPipe,
   makeEdge,
   connectToNewNode,
+  connectBlank,
   placeStandalone,
   type InsertKind,
   newNode,
@@ -104,6 +106,7 @@ export function App() {
   const [tool, setTool] = useState<Tool>('select');
   const [pending, setPending] = useState<string>();
   const [adjustImageId, setAdjustImageId] = useState<string>();
+  const [adjustPick, setAdjustPick] = useState('');
   const [sideW, setSideW] = useState(loadSideWidth);
   const [calib, setCalib] = useState<{ x: number; y: number }[]>([]);
   const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string }>();
@@ -209,6 +212,32 @@ export function App() {
     } catch (err) {
       setMessage({ kind: 'error', text: err instanceof Error ? err.message : String(err) });
     }
+  };
+  const connectBlankDrag = (kind: ConnectKind, a: { x: number; y: number }, b: { x: number; y: number } | { uid: string }) => {
+    try {
+      const r = connectBlank(project, kind, a, b);
+      setProject(r.project);
+      setSelection({ type: 'edge', uid: r.selectUid });
+    } catch (err) {
+      setMessage({ kind: 'error', text: err instanceof Error ? err.message : String(err) });
+    }
+  };
+  const imageInput = useRef<HTMLInputElement>(null);
+  const addImageFile = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const layer = await layerFromFile(file, project.canvasW, project.canvasH);
+      setProject((p) => ({ ...p, images: [...p.images, layer] }));
+      setMessage({ kind: 'info', text: `Added “${file.name}”. Press Adjust image to move or zoom it.` });
+    } catch (err) {
+      setMessage({ kind: 'error', text: err instanceof Error ? err.message : String(err) });
+    }
+  };
+  const adjustTarget = project.images.find((im) => im.id === adjustPick) ?? project.images[0];
+  const toggleAdjust = () => {
+    setTool('select');
+    setPending(undefined);
+    setAdjustImageId((cur) => (cur ? undefined : adjustTarget?.id));
   };
   const placeAlone = (kind: 'pump' | 'valve' | 'orifice', x: number, y: number) => {
     const r = placeStandalone(project, kind, x, y);
@@ -506,6 +535,21 @@ export function App() {
                 <button key={t.id} className={tool === t.id ? 'active' : ''} title={t.title} aria-pressed={tool === t.id} onClick={() => pickTool(t.id)}>{t.label}</button>
               ))}
               <button onClick={deleteSelected} disabled={!selection}>Delete</button>
+              <span className="sep" />
+              {project.images.length === 0 ? (
+                <button onClick={() => imageInput.current?.click()} title="Add a drawing or photo under the network">🖼 Add image…</button>
+              ) : (
+                <>
+                  {project.images.length > 1 && (
+                    <select value={adjustTarget?.id ?? ''} onChange={(e) => setAdjustPick(e.target.value)} aria-label="Image to adjust" disabled={!!adjustImageId}>
+                      {project.images.map((im) => <option key={im.id} value={im.id}>{im.name}</option>)}
+                    </select>
+                  )}
+                  <button className={adjustImageId ? 'active' : ''} aria-pressed={!!adjustImageId} onClick={toggleAdjust} title="Move and zoom the image. Otherwise images cannot be moved or selected.">{adjustImageId ? '✓ Done adjusting' : '🖼 Adjust image'}</button>
+                  <button onClick={() => imageInput.current?.click()} title="Add another image">+ Image</button>
+                </>
+              )}
+              <input ref={imageInput} type="file" accept="image/*" hidden onChange={(e) => { void addImageFile(e.target.files?.[0]); e.target.value = ''; }} />
             </div>
 
             <div className="workspace" style={{ '--side-w': `${sideW}px` } as React.CSSProperties}>
@@ -525,6 +569,7 @@ export function App() {
                 onInsert={insertInto}
                 onPlace={placeAlone}
                 onConnectNew={connectNew}
+                onConnectBlank={connectBlankDrag}
                 onReverse={reverseEdge}
                 adjustImageId={adjustImageId}
                 onZoomImage={zoomImage}
