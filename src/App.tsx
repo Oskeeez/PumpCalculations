@@ -9,6 +9,7 @@ import { CanvasPanel } from './components/CanvasPanel';
 import { DraftsView } from './components/DraftsView';
 import { NodeEditor, PipeEditor, PumpEditor, ValveEditor } from './components/Editors';
 import { FluidBar } from './components/FluidBar';
+import { DensityContext } from './components/PressureField';
 import { HelpDialog } from './components/HelpDialog';
 import { NetworkToolbar } from './components/NetworkToolbar';
 import { PumpCurvesPanel } from './components/PumpCurvesPanel';
@@ -467,6 +468,7 @@ export function App() {
 
   return (
     <UnitsContext.Provider value={unitSystem}>
+      <DensityContext.Provider value={computed.model?.fluid.density ?? 998.2}>
       <div className="app">
         <TopBar
           buildId={typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev'}
@@ -496,6 +498,7 @@ export function App() {
           </div>
         )}
       </div>
+      </DensityContext.Provider>
     </UnitsContext.Provider>
   );
 }

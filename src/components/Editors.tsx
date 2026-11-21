@@ -4,6 +4,7 @@ import { defaultControl, type FittingUI, type NodeUI, type PipeUI, type PumpCont
 import { orificeBoreForDrop, requiredCv, requiredKv } from '../sizing';
 import { useUnits, type Quantity } from '../units';
 import { NumField } from './NumField';
+import { PressureField } from './PressureField';
 
 function NameField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
@@ -118,7 +119,7 @@ export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: 
       <div className="grid">
         <div className="field opt">
           <label><input type="checkbox" checked={pipe.ratingKPaG !== undefined} onChange={(e) => onChange({ ...pipe, ratingKPaG: e.target.checked ? 1000 : undefined })} /> Pressure rating (gauge)</label>
-          {pipe.ratingKPaG !== undefined && <NumField q="pressure" value={pipe.ratingKPaG} onChange={(v) => v > 0 && onChange({ ...pipe, ratingKPaG: v })} title="An alert is raised when the pressure at either end of this pipe is higher" />}
+          {pipe.ratingKPaG !== undefined && <PressureField value={pipe.ratingKPaG} onChange={(v) => v > 0 && onChange({ ...pipe, ratingKPaG: v })} title="An alert is raised when the pressure at either end of this pipe is higher" label="Rating" />}
         </div>
       </div>
       <h4>Fittings (K values), total K = {total.toFixed(2)}</h4>
@@ -193,7 +194,7 @@ function SizingHelper({ valve, onChange, designFlowLps, density }: { valve: Valv
       <p className="hint">Enter the flow it must pass and the pressure it should burn. The calculation uses the fluid density ({U.fu('density', density, 0)}).</p>
       <div className="grid">
         <NumField label="Design flow" q="flow" value={flow} onChange={(v) => v > 0 && setFlow(v)} />
-        <NumField label={orifice ? 'Permanent pressure loss' : 'Pressure drop'} q="pressure" value={drop} onChange={(v) => v > 0 && setDrop(v)} />
+        <PressureField label={orifice ? 'Permanent pressure loss' : 'Pressure drop'} value={drop} onChange={(v) => v > 0 && setDrop(v)} />
       </div>
       {body}
     </details>
@@ -222,13 +223,9 @@ export function ValveEditor({ valve, from, to, onChange, designFlowLps = 0, dens
             <option value="fcv">Flow-control (FCV)</option>
           </select>
         </label>
-        {valve.controlType !== 'none' && (
-          <NumField
-            label={valve.controlType === 'fcv' ? 'Set flow' : valve.controlType === 'prv' ? 'Set pressure, downstream (gauge)' : 'Set pressure, upstream (gauge)'}
-            q={controlQ}
-            value={valve.controlValue}
-            onChange={(v) => onChange({ ...valve, controlValue: v })}
-          />
+        {valve.controlType === 'fcv' && <NumField label="Set flow" q={controlQ} value={valve.controlValue} onChange={(v) => onChange({ ...valve, controlValue: v })} />}
+        {(valve.controlType === 'prv' || valve.controlType === 'psv') && (
+          <PressureField label={valve.controlType === 'prv' ? 'Set pressure, downstream (gauge)' : 'Set pressure, upstream (gauge)'} value={valve.controlValue} onChange={(v) => onChange({ ...valve, controlValue: v })} />
         )}
       </div>
       <h4>{valve.controlType === 'none' ? 'Loss' : 'Loss (fully open)'}</h4>
@@ -358,7 +355,7 @@ function PumpControlSection({ pump, onChange, nodes, onPickNode, pickActive, sol
           <button className={`pick-btn ${pickActive ? 'active' : ''}`} aria-pressed={pickActive} title="Choose the node by clicking it on the network" onClick={() => onPickNode((uid) => set({ ...c, nodeUid: uid }))}>◎ Pick</button>
         </div>
       )}
-      {c?.mode === 'pressure' && <NumField label="Pressure to hold (gauge)" q="pressure" value={c.kPaG} onChange={(v) => set({ ...c, kPaG: v })} />}
+      {c?.mode === 'pressure' && <PressureField label="Pressure to hold (gauge)" value={c.kPaG} onChange={(v) => set({ ...c, kPaG: v })} />}
       {c?.mode === 'flow' && <NumField label="Flow to hold" q="flow" value={c.lps} onChange={(v) => set({ ...c, lps: v })} />}
       {c && (
         <div className="grid">

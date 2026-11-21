@@ -56,3 +56,33 @@ describe('report', () => {
     await s.close();
   });
 });
+
+describe('pressure units', () => {
+  it('lets a pressure be typed in bar and shows the same pressure in other units, including metres of head', async () => {
+    const s = await open(app);
+    await s.page.getByRole('tab', { name: /Targets/ }).click();
+    await s.page.getByRole('button', { name: 'Residual pressure at a node' }).click();
+    const unit = s.page.locator('.target-row select[aria-label$="unit"]').first();
+    const field = s.page.locator('.target-row .unit-row input').first();
+    await unit.selectOption('bar');
+    await field.fill('2.5');
+    await unit.selectOption('kPa');
+    expect(await field.inputValue()).toBe('250');
+    await unit.selectOption('Pa');
+    expect(await field.inputValue()).toBe('250000');
+    await unit.selectOption('psi');
+    expect(Number(await field.inputValue())).toBeCloseTo(36.2594, 3);
+    await unit.selectOption('mhead');
+    const m = Number(await field.inputValue());
+    expect(m).toBeGreaterThan(25); // 250 kPa of water is about 25.5 m
+    expect(m).toBeLessThan(26);
+    // the unit choice is remembered for every pressure field, and survives a reload (wait for the autosave first)
+    await s.page.waitForTimeout(800);
+    await s.page.reload();
+    await s.page.waitForSelector('svg.canvas');
+    await s.page.getByRole('tab', { name: /Targets/ }).click();
+    expect(await s.page.locator('.target-row select[aria-label$="unit"]').first().inputValue()).toBe('mhead');
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+});

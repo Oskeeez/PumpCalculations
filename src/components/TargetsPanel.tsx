@@ -5,6 +5,7 @@ import { describeTarget, newTargetId } from '../ai/targets';
 import type { HydraulicProject } from '../model';
 import type { Quantity } from '../units';
 import { NumField } from './NumField';
+import { PressureField } from './PressureField';
 
 interface Props {
   project: HydraulicProject;
@@ -78,7 +79,7 @@ export function TargetsPanel({ project, targets, statuses, onChange, pickId, onP
   const optNum = (label: string, q: Quantity | undefined, unit: string | undefined, value: number | undefined, on: (v: number | undefined) => void) => (
     <div className="field opt">
       <label><input type="checkbox" checked={value !== undefined} onChange={(e) => on(e.target.checked ? 0 : undefined)} /> {label}</label>
-      {value !== undefined && <NumField q={q} unit={unit} value={value} onChange={on} />}
+      {value !== undefined && (q === 'pressure' ? <PressureField value={value} onChange={on} /> : <NumField q={q} unit={unit} value={value} onChange={on} />)}
     </div>
   );
 

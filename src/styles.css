@@ -433,3 +433,8 @@ body.ws-resizing-row { cursor: row-resize; user-select: none; }
 .net-panel .toolbar button { padding: 4px 9px; white-space: nowrap; }
 .net-panel .toolbar .find { width: 150px; min-width: 110px; }
 .net-panel .toolbar .sep { margin: 0 2px; }
+
+/* pressure field: number + unit */
+.unit-row { display: flex; gap: 4px; }
+.unit-row input { flex: 1; min-width: 0; }
+.unit-row select { flex: 0 0 auto; width: auto; max-width: 96px; }
