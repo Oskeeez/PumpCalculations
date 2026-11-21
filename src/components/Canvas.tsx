@@ -1,12 +1,13 @@
-import { useState, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useState, type PointerEvent as RPointerEvent } from 'react';
 import { planDistancePx } from '../geometry';
 import type { EdgeUI, InsertKind, NodeKind, NodeUI, ProjectUI } from '../model';
 import type { SystemResult } from '../solver';
 import { useUnits } from '../units';
+import { nodesInRect } from '../clipboard';
 import { contentBounds } from '../viewport';
 import { edgeGeometry, pairKey } from './canvasGeometry';
 import { useViewport } from './useViewport';
-import { SYM_MAX, SYM_MIN, ZoomControls } from './ZoomControls';
+import { LABEL_MODES, SYM_MAX, SYM_MIN, ZoomControls, type LabelMode } from './ZoomControls';
 
 export type Tool = 'select' | 'tank' | 'junction' | 'pipe' | 'pump' | 'valve' | 'orifice' | 'scale';
 export type Selection = { type: 'node' | 'edge'; uid: string } | null;
@@ -35,6 +36,11 @@ interface Props {
   onTool: (t: Tool) => void;
   onAddNode: (kind: NodeKind, x: number, y: number) => void;
   onMoveNode: (uid: string, x: number, y: number) => void;
+  /** The set of selected nodes when more than one is selected (shift-click or a box). */
+  multi?: ReadonlySet<string>;
+  onMulti?: (s: Set<string>) => void;
+  /** Move several nodes at once to new positions. */
+  onMoveNodes?: (positions: Map<string, { x: number; y: number }>) => void;
   onMoveImage: (id: string, x: number, y: number) => void;
   onConnect: (kind: ConnectKind, from: string, to: string) => void;
   /** Drag (or click) from a node into empty space: the end of the new pipe/pump/valve becomes a new node there. */
@@ -58,6 +64,8 @@ interface Props {
   fitKey?: number;
   /** A panel is asking the user to click a node, pump or line on the network. */
   pick?: PickSpec;
+  /** Ask the view to move to a node or element. A new `n` means a new request. */
+  focus?: { uid: string; n: number };
   onPick?: (uid: string) => void;
   onPickCancel?: () => void;
   /** Draft view: colour added / modified components. */
@@ -68,7 +76,20 @@ interface Props {
   readOnly?: boolean;
 }
 
-const snap = (v: number) => Math.round(v / GRID) * GRID;
+const VIEW_KEY = 'pipe-network-canvas-view';
+interface ViewOptions {
+  labels: LabelMode;
+  grid: boolean;
+  snap: boolean;
+}
+function loadViewOptions(): ViewOptions {
+  try {
+    const v = JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}') as Partial<ViewOptions>;
+    return { labels: LABEL_MODES.includes(v.labels as LabelMode) ? (v.labels as LabelMode) : 'full', grid: v.grid !== false, snap: v.snap !== false };
+  } catch {
+    return { labels: 'full', grid: true, snap: true };
+  }
+}
 const clampSym = (v: number) => Math.min(SYM_MAX, Math.max(SYM_MIN, v));
 
 function loadSym(): number {
@@ -97,13 +118,30 @@ const PICK_NAME: Record<PickAccept, string> = { node: 'node', pump: 'pump', line
  * Network canvas with a pan / zoom viewport that fills its tile. Scroll zooms about the pointer, dragging empty space pans, the +/−
  * buttons zoom, Fit shows the whole network. Symbol size (nodes, valves, pumps, labels) is separate from the zoom.
  */
-export function Canvas({ project, result, selection, tool, pending, calib, onSelect, onTool, onAddNode, onMoveNode, onMoveImage, onConnect, onInsert, onConnectNew, onConnectBlank, onPlace, onReverse, adjustImageId, onZoomImage, onAdjustDone, onPending, onCalibPoint, fitKey, pick, onPick, onPickCancel, highlight, removed, readOnly }: Props) {
+export function Canvas({ project, result, selection, tool, pending, calib, onSelect, onTool, onAddNode, onMoveNode, multi, onMulti, onMoveNodes, onMoveImage, onConnect, onInsert, onConnectNew, onConnectBlank, onPlace, onReverse, adjustImageId, onZoomImage, onAdjustDone, onPending, onCalibPoint, fitKey, pick, focus, onPick, onPickCancel, highlight, removed, readOnly }: Props) {
   const U = useUnits();
   const W = project.canvasW;
   const H = project.canvasH;
   const [drag, setDrag] = useState<{ kind: 'node' | 'image'; id: string; dx: number; dy: number } | null>(null);
+  /** Dragging several selected nodes together: where the pointer started and where each node was. */
+  const [group, setGroup] = useState<{ start: { x: number; y: number }; origin: Map<string, { x: number; y: number }> } | null>(null);
+  /** A box being drawn with shift held, in canvas units. */
+  const [box, setBox] = useState<{ a: { x: number; y: number }; b: { x: number; y: number } } | null>(null);
+  const inMulti = (uid: string) => !!multi && multi.has(uid);
   const [link, setLink] = useState<{ kind: ConnectKind; from: string; sx: number; sy: number; x: number; y: number; moved: boolean; target?: string } | null>(null);
   const [sym, setSym] = useState(loadSym);
+  const [opts, setOpts] = useState<ViewOptions>(loadViewOptions);
+  const changeOpts = (patch: Partial<ViewOptions>) => {
+    const next = { ...opts, ...patch };
+    setOpts(next);
+    try {
+      localStorage.setItem(VIEW_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  };
+  /** Round a position to the grid (or to a whole pixel when snapping is off). */
+  const snap = (v: number) => (opts.snap ? Math.round(v / GRID) * GRID : Math.round(v));
   const nodeById = new Map(project.nodes.map((n) => [n.uid, n]));
   const isConnect = tool === 'pipe' || tool === 'pump' || tool === 'valve' || tool === 'orifice';
   const vp = useViewport({
@@ -119,6 +157,18 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     },
   });
   const { svgRef, toSvg, zoomBy, fit } = vp;
+
+  // move to a node or element when asked (the search box)
+  useEffect(() => {
+    if (!focus) return;
+    const node = project.nodes.find((n) => n.uid === focus.uid);
+    if (node) return vp.centerOn(node.x, node.y);
+    const edge = project.edges.find((e) => e.uid === focus.uid);
+    const a = edge && project.nodes.find((n) => n.uid === edge.from);
+    const b = edge && project.nodes.find((n) => n.uid === edge.to);
+    if (a && b) vp.centerOn((a.x + b.x) / 2, (a.y + b.y) / 2);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus?.n]);
 
   const changeSym = (f: number) => {
     const next = clampSym(Math.round(sym * f * 100) / 100);
@@ -153,7 +203,10 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     } else if (tool === 'scale') {
       onCalibPoint(p);
     } else if (tool === 'select') {
-      startPan(e); // a drag pans; a plain click deselects (see onUp)
+      if (e.shiftKey && onMulti) {
+        setBox({ a: p, b: p }); // shift + drag draws a selection box
+        svgRef.current?.setPointerCapture(e.pointerId);
+      } else startPan(e); // a drag pans; a plain click deselects (see onUp)
     } else if (pending) {
       // first node picked, then a click in empty space: the end becomes a new node there
       onConnectNew(tool as ConnectKind, pending, snap(p.x), snap(p.y));
@@ -173,8 +226,24 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     }
     if (readOnly) return onSelect({ type: 'node', uid: n.uid });
     if (tool === 'select') {
-      onSelect({ type: 'node', uid: n.uid });
+      if (e.shiftKey && onMulti) {
+        // shift-click adds or removes the node from the selection (the one already selected counts)
+        const next = new Set(multi && multi.size ? multi : selection?.type === 'node' ? [selection.uid] : []);
+        if (next.has(n.uid)) next.delete(n.uid);
+        else next.add(n.uid);
+        onMulti(next);
+        onSelect(next.size === 1 ? { type: 'node', uid: [...next][0] } : null);
+        return;
+      }
       const p = toSvg(e);
+      if (multi && multi.size > 1 && multi.has(n.uid) && onMoveNodes) {
+        // drag the whole selection
+        setGroup({ start: p, origin: new Map(project.nodes.filter((q) => multi.has(q.uid)).map((q) => [q.uid, { x: q.x, y: q.y }])) });
+        svgRef.current?.setPointerCapture(e.pointerId);
+        return;
+      }
+      onMulti?.(new Set());
+      onSelect({ type: 'node', uid: n.uid });
       setDrag({ kind: 'node', id: n.uid, dx: n.x - p.x, dy: n.y - p.y });
       svgRef.current?.setPointerCapture(e.pointerId);
     } else if (isConnect) {
@@ -201,6 +270,17 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
 
   const onMove = (e: RPointerEvent) => {
     if (vp.movePan(e)) return;
+    if (box) {
+      setBox({ ...box, b: toSvg(e) });
+      return;
+    }
+    if (group) {
+      const p = toSvg(e);
+      const dx = snap(p.x - group.start.x);
+      const dy = snap(p.y - group.start.y);
+      onMoveNodes?.(new Map([...group.origin].map(([uid, o]) => [uid, { x: o.x + dx, y: o.y + dy }])));
+      return;
+    }
     if (drag) {
       const p = toSvg(e);
       if (drag.kind === 'node') onMoveNode(drag.id, snap(p.x + drag.dx), snap(p.y + drag.dy));
@@ -215,7 +295,21 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
   const onUp = (e: RPointerEvent) => {
     const panned = vp.endPan();
     if (panned) {
-      if (panned === 'click') onSelect(null); // a plain click on empty space deselects; a drag only pans
+      if (panned === 'click') {
+        onSelect(null); // a plain click on empty space deselects; a drag only pans
+        onMulti?.(new Set());
+      }
+      return;
+    }
+    if (box) {
+      const hit = new Set(nodesInRect(project.nodes, box.a, box.b));
+      onMulti?.(hit);
+      onSelect(hit.size === 1 ? { type: 'node', uid: [...hit][0] } : null);
+      setBox(null);
+      return;
+    }
+    if (group) {
+      setGroup(null);
       return;
     }
     if (link && link.from === '') {
@@ -317,8 +411,8 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
           <path d="M-6,-5 L6,0 L-6,5 Z" className="flow-arrow" transform={`translate(${mx} ${my}) rotate(${ang}) scale(${sym})`} />
         ) : null}
         <g transform={`translate(${mx} ${my}) scale(${sym})`}>
-          <text x={0} y={e.kind === 'pump' ? -24 : -16} textAnchor="middle" className="t-name">{e.name}</text>
-          {label && <text x={0} y={e.kind === 'pump' ? 32 : 26} textAnchor="middle" className="t-res">{label}{sub ? ` · ${sub}` : ''}</text>}
+          {opts.labels !== 'none' && <text x={0} y={e.kind === 'pump' ? -24 : -16} textAnchor="middle" className="t-name">{e.name}</text>}
+          {opts.labels === 'full' && label && <text x={0} y={e.kind === 'pump' ? 32 : 26} textAnchor="middle" className="t-res">{label}{sub ? ` · ${sub}` : ''}</text>}
         </g>
         {sel && !readOnly && (e.kind === 'pump' || e.kind === 'valve') && (
           <>
@@ -344,7 +438,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     const sel = selection?.type === 'node' && selection.uid === n.uid;
     const nr = result?.nodes.find((x) => x.id === n.name);
     const pickable = pick?.accept === 'node';
-    const cls = `node ${n.kind} ${pickable ? 'pickable' : ''} ${highlight?.get(n.uid) ? `hl-${highlight.get(n.uid)}` : ''} ${sel ? 'sel' : ''} ${pending === n.uid || link?.from === n.uid || link?.target === n.uid ? 'pending' : ''} ${nr && nr.warnings.length ? 'warn' : ''}`;
+    const cls = `node ${n.kind} ${inMulti(n.uid) ? 'multi' : ''} ${pickable ? 'pickable' : ''} ${highlight?.get(n.uid) ? `hl-${highlight.get(n.uid)}` : ''} ${sel ? 'sel' : ''} ${pending === n.uid || link?.from === n.uid || link?.target === n.uid ? 'pending' : ''} ${nr && nr.warnings.length ? 'warn' : ''}`;
     const fill = Math.max(0.2, Math.min(0.9, n.levelM / (n.levelM + 3)));
     const top = n.kind === 'tank' ? 40 : 28;
     return (
@@ -357,11 +451,13 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
         ) : (
           <circle r={11} className="junction" />
         )}
-        <text y={top} textAnchor="middle" className="t-name">{n.name}</text>
-        <text y={top + 13} textAnchor="middle" className="t-sub">
-          {n.kind === 'tank' ? `z ${U.f('elevation', n.elevationM, 1)} · fluid ${U.fu('length', n.levelM, 1)}` : `z ${U.fu('elevation', n.elevationM, 1)}`}
-        </text>
-        {nr && (
+        {opts.labels !== 'none' && <text y={top} textAnchor="middle" className="t-name">{n.name}</text>}
+        {opts.labels === 'full' && (
+          <text y={top + 13} textAnchor="middle" className="t-sub">
+            {n.kind === 'tank' ? `z ${U.f('elevation', n.elevationM, 1)} · fluid ${U.fu('length', n.levelM, 1)}` : `z ${U.fu('elevation', n.elevationM, 1)}`}
+          </text>
+        )}
+        {opts.labels === 'full' && nr && (
           <text y={top + 26} textAnchor="middle" className="t-res">
             {n.kind === 'tank' ? `h ${U.fu('head', nr.headM, 1)}` : `${U.fu('pressure', nr.gaugePressurePa / 1000, 0)} g`}
             {n.kind === 'junction' && Math.abs(nr.netOutflowM3s) > 1e-9 ? ` · −${U.fu('flow', nr.netOutflowM3s * 1000, 1)}` : ''}
@@ -417,7 +513,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
         onPointerDown={(e) => { if (e.button === 1) { e.preventDefault(); startPan(e); } }}
         onPointerMove={onMove}
         onPointerUp={onUp}
-        onPointerCancel={() => { setDrag(null); setLink(null); vp.cancelPan(); }}
+        onPointerCancel={() => { setDrag(null); setLink(null); setBox(null); setGroup(null); vp.cancelPan(); }}
         onContextMenu={(e) => { if (tool !== 'select' && !readOnly) { e.preventDefault(); onPending(undefined); onTool('select'); } }}
         role="application"
         aria-label="Pipe network canvas"
@@ -427,7 +523,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
             <path d={`M ${GRID * 4} 0 L 0 0 0 ${GRID * 4}`} className="grid-line" />
           </pattern>
         </defs>
-        <rect x={-100000} y={-100000} width={200000} height={200000} fill="url(#grid)" onPointerDown={onBackgroundDown} />
+        <rect x={-100000} y={-100000} width={200000} height={200000} fill={opts.grid ? 'url(#grid)' : 'transparent'} onPointerDown={onBackgroundDown} />
         {project.images.map((im) => (
           <g key={im.id}>
             <image
@@ -465,8 +561,9 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
           </g>
         )}
         {nodeEls}
+        {box && <rect className="marquee" x={Math.min(box.a.x, box.b.x)} y={Math.min(box.a.y, box.b.y)} width={Math.abs(box.b.x - box.a.x)} height={Math.abs(box.b.y - box.a.y)} />}
       </svg>
-      <ZoomControls onZoom={zoomBy} onFit={() => fit()} symbolScale={sym} onSymbolScale={changeSym} />
+      <ZoomControls onZoom={zoomBy} onFit={() => fit()} symbolScale={sym} onSymbolScale={changeSym} labels={opts.labels} onLabels={() => changeOpts({ labels: LABEL_MODES[(LABEL_MODES.indexOf(opts.labels) + 1) % LABEL_MODES.length] })} grid={opts.grid} onGrid={() => changeOpts({ grid: !opts.grid })} snap={opts.snap} onSnap={() => changeOpts({ snap: !opts.snap })} />
     </div>
   );
 }

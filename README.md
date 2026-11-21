@@ -19,7 +19,14 @@ npm run e2e      # browser tests (Playwright; first run: npx playwright install 
 - Pump curves at several speeds (affinity laws), scenario comparison, SI and US units.
 - Save and open as JSON, autosave, undo and redo, Excel export.
 
+## Using it
+- Press **?** in the app for the mouse and keyboard help. Shift-drag selects several nodes; Ctrl+C and Ctrl+V copy and paste them with the pipes between them.
+- The canvas has Fit, zoom, symbol size, label level, grid and snap controls in its corner. Any tile can be maximised with its ⤢ button.
+- Pumps can be switched off, or run at a variable speed that holds a flow or a node pressure. Valves and orifices have a "Size this valve" helper.
+- **Report** panel: a printable summary (print or save as PDF). Excel export includes targets and the pump curve library.
+
 ## Documentation
+- [`docs/BUILD_PLAN.md`](docs/BUILD_PLAN.md): what has been built and what is deferred.
 - [`docs/THEORY.md`](docs/THEORY.md): the equations used, where they come from, how the solver is checked, and what it does not model.
 
 ## Workspace and pump curves

@@ -287,3 +287,38 @@ export function saveLayout(l: LayoutNode): void {
     /* ignore */
   }
 }
+
+// ----------------------------------------------------------- named layouts
+const NAMED_KEY = 'pipe-network-named-layouts-v1';
+
+export interface NamedLayout {
+  name: string;
+  layout: LayoutNode;
+}
+
+export function loadNamedLayouts(): NamedLayout[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(NAMED_KEY) ?? '[]') as { name?: unknown; layout?: unknown }[];
+    return raw.flatMap((r) => {
+      const l = typeof r.name === 'string' && r.layout ? parseLayout(JSON.stringify(r.layout)) : undefined;
+      return l ? [{ name: r.name as string, layout: l }] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** Add (or replace, by name) a saved layout and return the new list. */
+export function withNamedLayout(list: NamedLayout[], name: string, layout: LayoutNode): NamedLayout[] {
+  const n = name.trim();
+  if (!n) return list;
+  return [...list.filter((x) => x.name !== n), { name: n, layout: normalize(layout) }];
+}
+
+export function saveNamedLayouts(list: NamedLayout[]): void {
+  try {
+    localStorage.setItem(NAMED_KEY, JSON.stringify(list));
+  } catch {
+    /* ignore */
+  }
+}

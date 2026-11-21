@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { loadCriteria, type DesignCriteria } from './ai/criteria';
 import { loadAiSettings, type AiSettings } from './ai/llm';
 import { evaluateTargets } from './ai/targets';
@@ -9,6 +9,7 @@ import { CanvasPanel } from './components/CanvasPanel';
 import { DraftsView } from './components/DraftsView';
 import { NodeEditor, PipeEditor, PumpEditor, ValveEditor } from './components/Editors';
 import { FluidBar } from './components/FluidBar';
+import { HelpDialog } from './components/HelpDialog';
 import { NetworkToolbar } from './components/NetworkToolbar';
 import { PumpCurvesPanel } from './components/PumpCurvesPanel';
 import { ReportPanel } from './components/ReportPanel';
@@ -18,6 +19,7 @@ import { SpeedPanel, type SpeedConfig } from './components/SpeedPanel';
 import { TargetsPanel } from './components/TargetsPanel';
 import { TopBar } from './components/TopBar';
 import { EXPORT_THEME, SCREEN_THEME, SI_AXES, pumpChartSvg, CHART_H, CHART_W } from './curveChart';
+import { copyNodes, moveNodes, pasteClip, removeNodes, type Clip } from './clipboard';
 import { calibrate } from './geometry';
 import { useHistory } from './history';
 import { Workspace } from './layout/Workspace';
@@ -43,6 +45,11 @@ export function App() {
   const [tool, setTool] = useState<Tool>('select');
   const [pending, setPending] = useState<string>();
   const [calib, setCalib] = useState<{ x: number; y: number }[]>([]);
+  const [help, setHelp] = useState(false);
+  /** Nodes selected together (shift-click or a box). */
+  const [multi, setMulti] = useState<Set<string>>(new Set());
+  const clip = useRef<Clip | undefined>(undefined);
+  const [focus, setFocus] = useState<{ uid: string; n: number }>();
   const [epoch, setEpoch] = useState(0); // changes when a different project is loaded: the canvas re-fits
   const [pick, setPick] = useState<(PickSpec & { id: string; apply: (uid: string) => void }) | null>(null);
   const [unitSystem, setUnitSystem] = useState<UnitSystem>(loadUnits);
@@ -142,8 +149,35 @@ export function App() {
     showPanel('network');
   };
 
+  /** Delete: a group of selected nodes, or the single selection. */
+  const deleteSelection = () => {
+    if (multi.size > 0) {
+      setProject((p) => removeNodes(p, multi));
+      setMulti(new Set());
+      setSelection(null);
+    } else edit.deleteSelected();
+  };
+  const copySelection = () => {
+    const ids = multi.size > 0 ? multi : selection?.type === 'node' ? new Set([selection.uid]) : new Set<string>();
+    const c = copyNodes(project, ids);
+    if (!c) return false;
+    clip.current = c;
+    setMessage({ kind: 'info', text: `Copied ${c.nodes.length} node${c.nodes.length === 1 ? '' : 's'} and ${c.edges.length} pipe, valve or pump${c.edges.length === 1 ? '' : 's'}. Press Ctrl+V to paste.` });
+    return true;
+  };
+  const pasteSelection = () => {
+    if (!clip.current) return false;
+    const r = pasteClip(project, clip.current);
+    syncUidCounter(r.project);
+    setProject(r.project);
+    setMulti(new Set(r.newNodeUids));
+    setSelection(null);
+    return true;
+  };
+
   // ---- whole-project actions
   const replaceProject = (p: ProjectUI, text?: string) => {
+    setMulti(new Set());
     setEpoch((n) => n + 1);
     setPick(null);
     syncUidCounter(p);
@@ -186,29 +220,39 @@ export function App() {
   const renameScenario = (id: string, name: string) => setProject((p) => ({ ...p, scenarios: (p.scenarios ?? []).map((s) => (s.id === id ? { ...s, name } : s)) }), `scn:${id}`);
 
   // ---- keyboard
+  // One keyboard listener for the life of the app. It calls the latest handler through a ref, so it is never removed and re-added
+  // in the middle of a key event (which would make the browser skip other listeners for that event).
+  const onKeyRef = useRef<(ev: KeyboardEvent) => void>(() => undefined);
+  onKeyRef.current = (ev: KeyboardEvent) => {
+    const tag = (ev.target as HTMLElement | null)?.tagName;
+    const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    const mod = ev.ctrlKey || ev.metaKey;
+    if (mod && !typing && ev.key.toLowerCase() === 'z') {
+      ev.preventDefault();
+      ev.shiftKey ? redo() : undo();
+    } else if (mod && !typing && ev.key.toLowerCase() === 'y') {
+      ev.preventDefault();
+      redo();
+    } else if (mod && !typing && ev.key.toLowerCase() === 'c') {
+      if (copySelection()) ev.preventDefault();
+    } else if (mod && !typing && ev.key.toLowerCase() === 'v') {
+      if (pasteSelection()) ev.preventDefault();
+    } else if (typing) return;
+    else if (ev.key === '?') setHelp((h) => !h);
+    else if (ev.key === 'Escape') {
+      setPick(null);
+      imgs.setAdjustImageId(undefined);
+      setPending(undefined);
+      setCalib([]);
+      setMulti(new Set());
+      setTool('select');
+    } else if (ev.key === 'Delete' || ev.key === 'Backspace') deleteSelection();
+  };
   useEffect(() => {
-    const onKey = (ev: KeyboardEvent) => {
-      const tag = (ev.target as HTMLElement | null)?.tagName;
-      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-      const mod = ev.ctrlKey || ev.metaKey;
-      if (mod && !typing && ev.key.toLowerCase() === 'z') {
-        ev.preventDefault();
-        ev.shiftKey ? redo() : undo();
-      } else if (mod && !typing && ev.key.toLowerCase() === 'y') {
-        ev.preventDefault();
-        redo();
-      } else if (typing) return;
-      else if (ev.key === 'Escape') {
-        setPick(null);
-        imgs.setAdjustImageId(undefined);
-        setPending(undefined);
-        setCalib([]);
-        setTool('select');
-      } else if (ev.key === 'Delete' || ev.key === 'Backspace') edit.deleteSelected();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  });
+    const listener = (ev: KeyboardEvent) => onKeyRef.current(ev);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, []);
 
   // ---- layout persistence; selecting something brings the Properties tab forward (if it is open)
   useEffect(() => {
@@ -244,14 +288,19 @@ export function App() {
         tool={tool}
         onSelectTool={() => toSelect('select')}
         onPickTool={pickTool}
-        canDelete={!!selection}
-        onDelete={edit.deleteSelected}
+        canDelete={!!selection || multi.size > 0}
+        onDelete={deleteSelection}
         images={project.images}
         adjustId={imgs.adjustImageId}
         adjustTargetId={imgs.adjustTarget?.id}
         onAdjustPick={imgs.setAdjustPick}
         onToggleAdjust={toggleAdjust}
         onAddImageFile={(f) => void imgs.addImageFile(f)}
+        findItems={[...project.nodes.map((n) => ({ uid: n.uid, label: n.name })), ...project.edges.map((e) => ({ uid: e.uid, label: e.name }))]}
+        onFind={(uid) => {
+          setSelection(project.nodes.some((n) => n.uid === uid) ? { type: 'node', uid } : { type: 'edge', uid });
+          setFocus((f) => ({ uid, n: (f?.n ?? 0) + 1 }));
+        }}
       />
       <Canvas
         project={project}
@@ -264,6 +313,9 @@ export function App() {
         onTool={toSelect}
         onAddNode={edit.addNode}
         onMoveNode={edit.moveNode}
+        multi={multi}
+        onMulti={setMulti}
+        onMoveNodes={(m) => setProject((p) => moveNodes(p, m), 'drag:group')}
         onMoveImage={(id, x, y) => imgs.updateImage(id, { x, y })}
         onConnect={edit.connect}
         onInsert={edit.insertInto}
@@ -277,6 +329,7 @@ export function App() {
         onPending={setPending}
         onCalibPoint={(p) => setCalib((c) => (c.length >= 2 ? [p] : [...c, p]))}
         fitKey={epoch}
+        focus={focus}
         pick={pick ?? undefined}
         onPick={(uid) => { const back = pick?.id.startsWith('speed') ? 'speed' : pick?.id.startsWith('pumpctl') ? 'properties' : 'targets'; pick?.apply(uid); setPick(null); setLayout((l) => activatePanel(l, back)); }}
         onPickCancel={() => setPick(null)}
@@ -291,7 +344,13 @@ export function App() {
       case 'properties':
         return (
           <div className="side">
-            {!hasSide && (
+            {multi.size > 1 && (
+              <section className="editor">
+                <h3>{multi.size} nodes selected</h3>
+                <p className="hint">Drag one to move them all. Delete removes them and their pipes. Ctrl+C then Ctrl+V copies them with the pipes between them. Click empty space or press Esc to deselect.</p>
+              </section>
+            )}
+            {!hasSide && multi.size <= 1 && (
               <section className="editor empty-side">
                 <h3>Properties</h3>
                 <p className="hint">Nothing selected. Click a node, pipe, valve or pump on the network to edit it here.</p>
@@ -425,7 +484,9 @@ export function App() {
           onLayout={setLayout}
           canExport={canExport}
           onExport={() => void exportXlsx()}
+          onHelp={() => setHelp(true)}
         />
+        {help && <HelpDialog onClose={() => setHelp(false)} />}
         <FluidBar project={project} computed={computed} onFluid={edit.updateFluid} onSetting={(patch, k) => setProject((p) => ({ ...p, ...patch }), k)} />
         <Workspace layout={layout} onLayout={setLayout} render={renderPanel} badge={badge} />
         {message && (

@@ -404,3 +404,32 @@ body.ws-resizing-row { cursor: row-resize; user-select: none; }
 .sizing summary { cursor: pointer; font-weight: 600; }
 
 .report-panel .report-preview { background: #fff; color: #1d2330; border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin-top: 8px; }
+
+.zoom-ctl { flex-wrap: wrap; justify-content: flex-end; max-width: 420px; }
+.zoom-ctl button.on { background: color-mix(in srgb, var(--accent) 18%, var(--panel)); border-color: var(--accent); }
+.zoom-ctl button.wide { height: 34px; font-size: 13px; }
+
+.ws-max { border: 0; background: none; padding: 0 6px; font-size: 15px; color: var(--muted); margin-left: auto; align-self: center; border-radius: 4px; }
+.ws-max:hover { background: var(--border); color: var(--fg); }
+.ws-add { margin-left: 0; }
+
+.ws-add { order: 2; } .ws-max { order: 3; }
+.modal-back { position: fixed; inset: 0; z-index: 100; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; max-width: 760px; max-height: 86vh; overflow: auto; padding: 14px 18px; box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4); }
+.modal-head { display: flex; justify-content: space-between; align-items: center; }
+.modal-head h3 { margin: 0; }
+.modal table { margin-top: 8px; } .modal th { text-align: left; font-weight: 600; vertical-align: top; padding: 4px 12px 4px 0; white-space: normal; width: 42%; } .modal td { text-align: left; padding: 4px 0; }
+
+.ws-saved { display: flex; align-items: center; } .ws-saved > button:first-child { flex: 1; } .ws-del { padding: 2px 8px !important; color: var(--muted); }
+
+/* multi-select */
+.canvas .marquee { fill: rgba(31, 111, 235, 0.12); stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 6 4; pointer-events: none; vector-effect: non-scaling-stroke; }
+.canvas .node.multi .junction, .canvas .node.multi .tank { stroke: var(--accent); stroke-width: 4px; }
+.canvas .node.multi .tank { filter: drop-shadow(0 0 4px var(--accent)); }
+.canvas .node.multi .junction { filter: drop-shadow(0 0 4px var(--accent)); }
+
+/* keep the network toolbar to one or two rows */
+.net-panel .toolbar { gap: 6px; }
+.net-panel .toolbar button { padding: 4px 9px; white-space: nowrap; }
+.net-panel .toolbar .find { width: 150px; min-width: 110px; }
+.net-panel .toolbar .sep { margin: 0 2px; }

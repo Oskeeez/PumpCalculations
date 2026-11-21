@@ -6,6 +6,11 @@ import {
   PRESETS,
   addTab,
   closePanel,
+  findGroup,
+  loadNamedLayouts,
+  saveNamedLayouts,
+  withNamedLayout,
+  type NamedLayout,
   movePanel,
   openPanel,
   openPanels,
@@ -33,12 +38,28 @@ const MIN = 0.07;
 
 export function Workspace({ layout, onLayout, render, badge }: Props) {
   const [dragging, setDragging] = useState<PanelId | null>(null);
+  /** The tile shown full-screen, if any. The rest of the layout is kept and comes back when it is restored. */
+  const [maxId, setMaxId] = useState<string | null>(null);
   const ref = useRef(layout);
   ref.current = layout;
   const apply = (l: LayoutNode) => onLayout(l);
+  const maximised = maxId ? findGroup(layout, maxId) : undefined;
+  useEffect(() => {
+    if (maxId && !maximised) setMaxId(null); // its tile was closed or merged away
+  }, [maxId, maximised]);
+  useEffect(() => {
+    if (!maximised) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (e.key === 'Escape' && tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') setMaxId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [maximised]);
+  const ctx: Ctx = { layoutRef: ref, apply, render, badge, dragging, setDragging, maxId: maximised ? maxId : null, toggleMax: (id) => setMaxId((cur) => (cur === id ? null : id)) };
   return (
     <div className="ws-root">
-      <NodeView node={layout} ctx={{ layoutRef: ref, apply, render, badge, dragging, setDragging }} />
+      <NodeView node={maximised ?? layout} ctx={ctx} />
     </div>
   );
 }
@@ -50,6 +71,8 @@ interface Ctx {
   badge: Props['badge'];
   dragging: PanelId | null;
   setDragging: (p: PanelId | null) => void;
+  maxId: string | null;
+  toggleMax: (groupId: string) => void;
 }
 
 function NodeView({ node, ctx }: { node: LayoutNode; ctx: Ctx }) {
@@ -167,6 +190,7 @@ function GroupView({ group, ctx }: { group: Group; ctx: Ctx }) {
             <button className="ws-x" aria-label={`Close ${PANEL_TITLES[p]}`} title="Close this panel (re-open it from the Panels menu or the + button)" onClick={(e) => { e.stopPropagation(); ctx.apply(closePanel(ctx.layoutRef.current, p)); }}>×</button>
           </div>
         ))}
+        <button className="ws-max" aria-label={ctx.maxId === group.id ? 'Restore the tile size' : 'Maximise this tile'} title={ctx.maxId === group.id ? 'Restore the tile (Esc)' : 'Fill the whole workspace with this tile'} onClick={() => ctx.toggleMax(group.id)}>{ctx.maxId === group.id ? '❐' : '⤢'}</button>
         <div className="ws-add" onPointerDown={(e) => e.stopPropagation()}>
           <button className="ws-plus" aria-label="Add a panel to this tile" title="Add a panel to this tile" onClick={() => setMenu((m) => !m)} disabled={closed.length === 0}>+</button>
           {menu && (
@@ -217,8 +241,13 @@ function Menu({ label, title, children }: { label: string; title?: string; child
   );
 }
 
-/** Choose a ready-made arrangement, or reset. */
-export function LayoutMenu({ onLayout }: { onLayout: (l: LayoutNode) => void }) {
+/** Choose a ready-made arrangement or one of your own saved ones, or save the current arrangement under a name. */
+export function LayoutMenu({ layout, onLayout }: { layout: LayoutNode; onLayout: (l: LayoutNode) => void }) {
+  const [saved, setSaved] = useState<NamedLayout[]>(loadNamedLayouts);
+  const update = (next: NamedLayout[]) => {
+    setSaved(next);
+    saveNamedLayouts(next);
+  };
   return (
     <Menu label="Layout" title="Arrange the workspace">
       {(close) => (
@@ -226,6 +255,18 @@ export function LayoutMenu({ onLayout }: { onLayout: (l: LayoutNode) => void }) 
           {PRESETS.map((p) => (
             <button key={p.id} role="menuitem" onClick={() => { onLayout(presetLayout(p.id)); close(); }}>{p.label}</button>
           ))}
+          <hr />
+          {saved.length > 0 && <div className="ws-menu-note">Your layouts</div>}
+          {saved.map((n) => (
+            <div key={n.name} className="ws-saved">
+              <button role="menuitem" onClick={() => { onLayout(n.layout); close(); }}>{n.name}</button>
+              <button className="ws-del" aria-label={`Delete the layout ${n.name}`} title="Delete this saved layout" onClick={() => update(saved.filter((x) => x.name !== n.name))}>×</button>
+            </div>
+          ))}
+          <button role="menuitem" onClick={() => {
+            const name = window.prompt('Name for this layout:', `My layout ${saved.length + 1}`);
+            if (name && name.trim()) { update(withNamedLayout(saved, name, layout)); close(); }
+          }}>Save this layout as…</button>
           <hr />
           <div className="ws-menu-note">Drag a tab to move it. Drop it on a tile's edge to dock it beside, or in the middle to add it as a tab. Drag the bars between tiles to resize (double-click to even out).</div>
         </>

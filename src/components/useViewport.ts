@@ -84,6 +84,8 @@ export function useViewport(o: Options) {
   }, []);
 
   const zoomBy = (f: number) => setView((v) => zoomAbout(v, f, v.cx, v.cy));
+  /** Move the view so a canvas point is in the middle, zooming in if the view is too far out to see it clearly. */
+  const centerOn = (x: number, y: number, minScale = 0.8) => setView((v) => ({ cx: x, cy: y, scale: Math.max(v.scale, minScale) }));
 
   const beginPan = (e: RPointerEvent) => {
     pan.current = { sx: e.clientX, sy: e.clientY, cx: view.cx, cy: view.cy, moved: false };
@@ -109,5 +111,5 @@ export function useViewport(o: Options) {
     pan.current = null;
   };
 
-  return { svgRef, size, view, ready, fit, zoomBy, toSvg, beginPan, movePan, endPan, cancelPan, viewBoxString: ready ? viewBox(view, size) : `0 0 ${o.canvas.w} ${o.canvas.h}` };
+  return { svgRef, size, view, ready, fit, zoomBy, centerOn, toSvg, beginPan, movePan, endPan, cancelPan, viewBoxString: ready ? viewBox(view, size) : `0 0 ${o.canvas.w} ${o.canvas.h}` };
 }

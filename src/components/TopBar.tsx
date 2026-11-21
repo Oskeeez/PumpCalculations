@@ -19,6 +19,7 @@ interface Props {
   onLayout: (l: LayoutNode) => void;
   canExport: boolean;
   onExport: () => void;
+  onHelp: () => void;
 }
 
 /** Title, project menu (undo, new, open, save), units, layout and panel menus, and Excel export. */
@@ -43,9 +44,10 @@ export function TopBar(p: Props) {
           <button className={p.unitSystem === 'us' ? 'active' : ''} aria-pressed={p.unitSystem === 'us'} onClick={() => p.onUnits('us')}>US</button>
         </span>
         <span className="sep" />
-        <LayoutMenu onLayout={p.onLayout} />
+        <LayoutMenu layout={p.layout} onLayout={p.onLayout} />
         <PanelsMenu layout={p.layout} onLayout={p.onLayout} />
       </div>
+      <button onClick={p.onHelp} title="Mouse and keyboard help (?)" aria-label="Help">? Help</button>
       <button className="primary export" disabled={!p.canExport} onClick={p.onExport} title="Excel sheets are always in SI units">Export Excel</button>
     </header>
   );
