@@ -42,6 +42,21 @@ function Ends({ from, to, onSwap }: { from: string; to: string; onSwap: () => vo
   );
 }
 
+/** Prominent flow-direction control for a pump or a directional valve. */
+function Direction({ inLabel, outLabel, from, to, onSwap, note }: { inLabel: string; outLabel: string; from: string; to: string; onSwap: () => void; note?: string }) {
+  return (
+    <div className="direction">
+      <div className="dir-row">
+        <div className="dir-end"><small>{inLabel}</small><b>{from}</b></div>
+        <div className="dir-arrow" aria-hidden="true">━━▶</div>
+        <div className="dir-end"><small>{outLabel}</small><b>{to}</b></div>
+      </div>
+      <button className="primary" onClick={onSwap} title="Swap the two ends so the flow runs the other way">⇄ Reverse direction</button>
+      {note && <small className="hint">{note}</small>}
+    </div>
+  );
+}
+
 export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: PipeUI; from: string; to: string; canvasLengthM: number; onChange: (p: PipeUI) => void }) {
   const U = useUnits();
   const setFit = (i: number, f: FittingUI) => onChange({ ...pipe, fittings: pipe.fittings.map((x, j) => (j === i ? f : x)) });
@@ -129,7 +144,11 @@ export function ValveEditor({ valve, from, to, onChange }: { valve: ValveUI; fro
     <section className="editor">
       <h3>Valve</h3>
       <NameField value={valve.name} onChange={(name) => onChange({ ...valve, name })} />
-      <Ends from={from} to={to} onSwap={() => onChange({ ...valve, from: valve.to, to: valve.from })} />
+      {valve.checkValve || valve.controlType !== 'none' ? (
+        <Direction inLabel="IN" outLabel="OUT" from={from} to={to} onSwap={() => onChange({ ...valve, from: valve.to, to: valve.from })} note="Check valves and regulators only pass flow from IN to OUT." />
+      ) : (
+        <Ends from={from} to={to} onSwap={() => onChange({ ...valve, from: valve.to, to: valve.from })} />
+      )}
       <div className="grid">
         <label className="field">
           <span>Function</span>
@@ -232,7 +251,7 @@ export function PumpEditor({ pump, from, to, onChange, headFitRmse }: { pump: Pu
     <section className="editor">
       <h3>Pump</h3>
       <NameField value={pump.name} onChange={(name) => onChange({ ...pump, name })} />
-      <Ends from={`${from} (suction)`} to={`${to} (discharge)`} onSwap={() => onChange({ ...pump, from: pump.to, to: pump.from })} />
+      <Direction inLabel="SUCTION (in)" outLabel="DISCHARGE (out)" from={from} to={to} onSwap={() => onChange({ ...pump, from: pump.to, to: pump.from })} note="A pump only pushes flow from suction to discharge; flow cannot run backwards through it." />
       <div className="grid">
         <NumField label="Speed ratio N/N_rated" value={pump.speedRatio} onChange={(v) => onChange({ ...pump, speedRatio: v })} />
         <NumField label="Rated speed" unit="rpm" value={pump.ratedRpm} onChange={(v) => onChange({ ...pump, ratedRpm: v })} />

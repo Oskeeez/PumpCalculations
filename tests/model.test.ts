@@ -167,3 +167,44 @@ describe('insert onto a pipe', () => {
     expect(compute(project).error).toBeUndefined();
   });
 });
+
+import { connectToNewNode, makeEdge, placeStandalone } from '../src/model';
+
+describe('placing elements', () => {
+  it('splits a pipe with a tank', () => {
+    const p = defaultProject();
+    const pipe = p.edges.find((e) => e.name === 'Pipe A')!;
+    const { project, selectUid } = insertOnPipe(p, pipe.uid, 'tank', 520, 200);
+    const t = project.nodes.find((n) => n.uid === selectUid)!;
+    expect(t.kind).toBe('tank');
+    expect(project.nodes).toHaveLength(p.nodes.length + 1);
+    expect(project.edges).toHaveLength(p.edges.length + 1);
+    expect(compute(project).error).toBeUndefined();
+  });
+
+  it('places a pump, valve or orifice on its own with two end nodes, suction on the left', () => {
+    const p = defaultProject();
+    for (const kind of ['pump', 'valve', 'orifice'] as const) {
+      const { project, selectUid } = placeStandalone(p, kind, 300, 500);
+      expect(project.nodes).toHaveLength(p.nodes.length + 2);
+      const e = project.edges.find((x) => x.uid === selectUid)!;
+      const a = project.nodes.find((n) => n.uid === e.from)!;
+      const b = project.nodes.find((n) => n.uid === e.to)!;
+      expect(a.x).toBeLessThan(b.x);
+      expect(e.kind).toBe(kind === 'pump' ? 'pump' : 'valve');
+    }
+    expect(placeStandalone(p, 'pump', 300, 500).project.nodes.slice(-2).map((n) => n.name)).toEqual(['Suction 1', 'Discharge 1']);
+  });
+
+  it('drag from a node into empty space creates a new end node at that point, at the start elevation', () => {
+    const p = defaultProject();
+    const j2 = p.nodes.find((n) => n.name === 'J2')!;
+    const { project, selectUid } = connectToNewNode(p, 'pipe', j2.uid, 700, 60);
+    const e = project.edges.find((x) => x.uid === selectUid)!;
+    expect(e.from).toBe(j2.uid);
+    const end = project.nodes.find((n) => n.uid === e.to)!;
+    expect([end.x, end.y, end.elevationM]).toEqual([700, 60, j2.elevationM]);
+    expect(() => connectToNewNode(p, 'pipe', 'nope', 0, 0)).toThrow(/no longer exists/);
+    expect(makeEdge('orifice', 'a', 'b', [], 80)).toMatchObject({ kind: 'valve', lossType: 'orifice', diameterMm: 80 });
+  });
+});

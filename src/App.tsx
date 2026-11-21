@@ -25,12 +25,11 @@ import {
   defaultProject,
   hydraulicKey,
   insertOnPipe,
+  makeEdge,
+  connectToNewNode,
+  placeStandalone,
   type InsertKind,
   newNode,
-  newPipe,
-  newPump,
-  newOrifice,
-  newValve,
   parseProject,
   pipeLengthM,
   serializeProject,
@@ -70,6 +69,19 @@ function loadInitial(): ProjectUI {
   return defaultProject();
 }
 
+const SIDE_KEY = 'pipe-network-side-width';
+const SIDE_MIN = 260;
+const SIDE_MAX = 760;
+function loadSideWidth(): number {
+  try {
+    const n = Number(localStorage.getItem(SIDE_KEY));
+    if (Number.isFinite(n) && n >= SIDE_MIN && n <= SIDE_MAX) return n;
+  } catch {
+    /* ignore */
+  }
+  return 340;
+}
+
 function loadUnits(): UnitSystem {
   try {
     return localStorage.getItem(UNITS_KEY) === 'us' ? 'us' : 'si';
@@ -91,6 +103,8 @@ export function App() {
   const [selection, setSelection] = useState<Selection>(null);
   const [tool, setTool] = useState<Tool>('select');
   const [pending, setPending] = useState<string>();
+  const [adjustImageId, setAdjustImageId] = useState<string>();
+  const [sideW, setSideW] = useState(loadSideWidth);
   const [calib, setCalib] = useState<{ x: number; y: number }[]>([]);
   const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string }>();
   const [speedCfg, setSpeedCfg] = useState<SpeedConfig>({ pumpUid: '', minPct: 60, maxPct: 100, stepPct: 10 });
@@ -155,6 +169,7 @@ export function App() {
   /** Tool buttons toggle: pressing the active one returns to select mode. */
   const pickTool = (t: Tool) => {
     setTool((cur) => (cur === t ? 'select' : t));
+    setAdjustImageId(undefined);
     setPending(undefined);
     setCalib([]);
   };
@@ -172,7 +187,7 @@ export function App() {
   const p0Diameter = (nodeUid: string) => (project.edges.find((e) => e.kind === 'pipe' && (e.from === nodeUid || e.to === nodeUid)) as PipeUI | undefined)?.diameterMm ?? 102.26;
   const connect = (kind: ConnectKind, from: string, to: string) => {
     const taken = project.edges.map((e) => e.name);
-    const e = kind === 'pipe' ? newPipe(from, to, taken) : kind === 'pump' ? newPump(from, to, taken) : kind === 'orifice' ? newOrifice(from, to, taken, p0Diameter(from)) : newValve(from, to, taken);
+    const e = makeEdge(kind, from, to, taken, p0Diameter(from));
     setProject((p) => ({ ...p, edges: [...p.edges, e] }));
     setSelection({ type: 'edge', uid: e.uid });
   };
@@ -185,6 +200,51 @@ export function App() {
     } catch (err) {
       setMessage({ kind: 'error', text: err instanceof Error ? err.message : String(err) });
     }
+  };
+  const connectNew = (kind: ConnectKind, from: string, x: number, y: number) => {
+    try {
+      const r = connectToNewNode(project, kind, from, x, y, p0Diameter(from));
+      setProject(r.project);
+      setSelection({ type: 'edge', uid: r.selectUid });
+    } catch (err) {
+      setMessage({ kind: 'error', text: err instanceof Error ? err.message : String(err) });
+    }
+  };
+  const placeAlone = (kind: 'pump' | 'valve' | 'orifice', x: number, y: number) => {
+    const r = placeStandalone(project, kind, x, y);
+    setProject(r.project);
+    setSelection({ type: 'edge', uid: r.selectUid });
+    setMessage(undefined);
+  };
+  const reverseEdge = (uid: string) => setProject((p) => ({ ...p, edges: p.edges.map((e) => (e.uid === uid ? { ...e, from: e.to, to: e.from } : e)) }), `edge:${uid}`);
+  const zoomImage = (id: string, factor: number, cx: number, cy: number) =>
+    setProject((p) => ({
+      ...p,
+      images: p.images.map((im) => {
+        if (im.id !== id) return im;
+        const f = Math.max(0.2, Math.min(5, factor));
+        const width = Math.max(20, Math.min(20000, im.width * f));
+        const k = width / im.width;
+        return { ...im, width, height: im.height * k, x: Math.round(cx - (cx - im.x) * k), y: Math.round(cy - (cy - im.y) * k) };
+      }),
+    }), `imgzoom:${id}`);
+  const startSideDrag = (ev: React.PointerEvent) => {
+    ev.preventDefault();
+    const startX = ev.clientX;
+    const startW = sideW;
+    const move = (e: PointerEvent) => setSideW(Math.max(SIDE_MIN, Math.min(SIDE_MAX, startW + (startX - e.clientX))));
+    const up = (e: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      const w = Math.max(SIDE_MIN, Math.min(SIDE_MAX, startW + (startX - e.clientX)));
+      try {
+        localStorage.setItem(SIDE_KEY, String(w));
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
   };
   const moveNode = (uid: string, x: number, y: number) => setProject((p) => ({ ...p, nodes: p.nodes.map((n) => (n.uid === uid ? { ...n, x, y } : n)) }), `drag:${uid}`);
   const updateNode = (n: NodeUI) => setProject((p) => ({ ...p, nodes: p.nodes.map((q) => (q.uid === n.uid ? n : q)) }), `node:${n.uid}`);
@@ -299,6 +359,7 @@ export function App() {
         redo();
       } else if (typing) return;
       else if (ev.key === 'Escape') {
+        setAdjustImageId(undefined);
         setPending(undefined);
         setCalib([]);
         setTool('select');
@@ -440,13 +501,14 @@ export function App() {
         ) : (
           <>
             <div className="toolbar" role="toolbar" aria-label="Network tools">
+              <button className={tool === 'select' ? 'active' : ''} aria-pressed={tool === 'select'} title="Select and move (Esc)" onClick={() => toSelect('select')}>↖ Select</button>
               {TOOLS.map((t) => (
                 <button key={t.id} className={tool === t.id ? 'active' : ''} title={t.title} aria-pressed={tool === t.id} onClick={() => pickTool(t.id)}>{t.label}</button>
               ))}
               <button onClick={deleteSelected} disabled={!selection}>Delete</button>
             </div>
 
-            <div className={`workspace ${hasSide ? '' : 'no-side'}`}>
+            <div className="workspace" style={{ '--side-w': `${sideW}px` } as React.CSSProperties}>
               <Canvas
                 project={project}
                 result={computed.result}
@@ -461,11 +523,25 @@ export function App() {
                 onMoveImage={(id, x, y) => updateImage(id, { x, y })}
                 onConnect={connect}
                 onInsert={insertInto}
+                onPlace={placeAlone}
+                onConnectNew={connectNew}
+                onReverse={reverseEdge}
+                adjustImageId={adjustImageId}
+                onZoomImage={zoomImage}
+                onAdjustDone={() => setAdjustImageId(undefined)}
                 onPending={setPending}
                 onCalibPoint={(p) => setCalib((c) => (c.length >= 2 ? [p] : [...c, p]))}
               />
-              {hasSide && (
+              <div className="side-handle" role="separator" aria-orientation="vertical" aria-label="Drag to resize the side panel" title="Drag to resize" onPointerDown={startSideDrag} onDoubleClick={() => { setSideW(340); try { localStorage.setItem(SIDE_KEY, '340'); } catch { /* ignore */ } }} />
+              {(
                 <aside className="side">
+                  {!hasSide && (
+                    <section className="editor empty-side">
+                      <h3>Properties</h3>
+                      <p className="hint">Nothing selected. Click a node, pipe, valve or pump to edit it here.</p>
+                      <p className="hint">Drag the bar on the left edge of this panel to resize it (double-click to reset).</p>
+                    </section>
+                  )}
                   {selNode && <NodeEditor node={selNode} onChange={updateNode} />}
                   {selEdge?.kind === 'pipe' && <PipeEditor pipe={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} canvasLengthM={pipeLengthM(project, selEdge)} onChange={updateEdge} />}
                   {selEdge?.kind === 'valve' && <ValveEditor valve={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} onChange={updateEdge} />}
@@ -498,6 +574,9 @@ export function App() {
                 onCanvasSize={(w, h) => setProject((p) => ({ ...p, canvasW: w, canvasH: h }), 'canvas')}
                 onAddImage={addImage}
                 onUpdateImage={updateImage}
+                adjustImageId={adjustImageId}
+                onAdjust={setAdjustImageId}
+                onZoom={(id, f) => { const im = project.images.find((q) => q.id === id); if (im) zoomImage(id, f, im.x + im.width / 2, im.y + im.height / 2); }}
                 onDeleteImage={deleteImage}
                 onStartCalib={() => { setCalib([]); setPending(undefined); setTool('scale'); }}
                 onApplyCalib={applyCalib}

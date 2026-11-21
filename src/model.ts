@@ -209,7 +209,7 @@ export function newValve(from: string, to: string, taken: string[]): ValveUI {
   return { kind: 'valve', uid: newUid(), name: uniqueName('Valve', taken), from, to, diameterMm: 102.26, lossType: 'K', lossValue: 0.15, checkValve: false, open: true, controlType: 'none', controlValue: 200 };
 }
 
-export type InsertKind = 'junction' | 'valve' | 'orifice' | 'pump';
+export type InsertKind = 'junction' | 'tank' | 'valve' | 'orifice' | 'pump';
 
 /**
  * Insert a junction, valve or pump into an existing pipe at the point on the pipe closest to (x, y).
@@ -227,18 +227,19 @@ export function insertOnPipe(p: ProjectUI, pipeUid: string, kind: InsertKind, x:
   const dy = b.y - a.y;
   const len = Math.hypot(dx, dy) || 1;
   const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / (len * len)));
-  const half = kind === 'junction' ? 0 : Math.min(25 / len, 0.2);
+  const single = kind === 'junction' || kind === 'tank';
+  const half = single ? 0 : Math.min(25 / len, 0.2);
   const t1 = Math.max(0.1, Math.min(0.9 - 2 * half, t - half));
-  const t2 = kind === 'junction' ? t1 : t1 + 2 * half;
+  const t2 = single ? t1 : t1 + 2 * half;
   const names = p.nodes.map((n) => n.name);
-  const mk = (tt: number): NodeUI => {
-    const n = newNode('junction', Math.round(a.x + dx * tt), Math.round(a.y + dy * tt), names);
+  const mk = (tt: number, nodeKind: NodeKind = 'junction'): NodeUI => {
+    const n = newNode(nodeKind, Math.round(a.x + dx * tt), Math.round(a.y + dy * tt), names);
     n.elevationM = a.elevationM + (b.elevationM - a.elevationM) * tt;
     names.push(n.name);
     return n;
   };
-  const j1 = mk(t1);
-  const j2 = kind === 'junction' ? j1 : mk(t2);
+  const j1 = mk(t1, kind === 'tank' ? 'tank' : 'junction');
+  const j2 = single ? j1 : mk(t2);
   const edgeNames = p.edges.map((e) => e.name);
   const tail: PipeUI = { ...pipe, uid: newUid(), name: uniqueName('Pipe', edgeNames), from: j2.uid, to: pipe.to, fittings: [], lengthM: pipe.lengthM * (1 - t2) };
   edgeNames.push(tail.name);
@@ -258,7 +259,7 @@ export function insertOnPipe(p: ProjectUI, pipeUid: string, kind: InsertKind, x:
   return {
     project: {
       ...p,
-      nodes: kind === 'junction' ? [...p.nodes, j1] : [...p.nodes, j1, j2],
+      nodes: single ? [...p.nodes, j1] : [...p.nodes, j1, j2],
       edges: p.edges.flatMap((e) => (e.uid === pipe.uid ? [head, ...middle, tail] : [e])),
     },
     selectUid,
@@ -267,6 +268,46 @@ export function insertOnPipe(p: ProjectUI, pipeUid: string, kind: InsertKind, x:
 
 export function newOrifice(from: string, to: string, taken: string[], diameterMm = 102.26): ValveUI {
   return { kind: 'valve', uid: newUid(), name: uniqueName('Orifice', taken), from, to, diameterMm, lossType: 'orifice', lossValue: Math.round(diameterMm * 5) / 10, orificeCd: ORIFICE_CD_DEFAULT, checkValve: false, open: true, controlType: 'none', controlValue: 200 };
+}
+
+export type ConnectKindM = 'pipe' | 'pump' | 'valve' | 'orifice';
+
+/** A new pipe, pump, valve or orifice between two nodes. Valves and orifices take the given diameter. */
+export function makeEdge(kind: ConnectKindM, from: string, to: string, taken: string[], diameterMm = 102.26): EdgeUI {
+  if (kind === 'pipe') return newPipe(from, to, taken);
+  if (kind === 'pump') return newPump(from, to, taken);
+  if (kind === 'orifice') return newOrifice(from, to, taken, diameterMm);
+  return { ...newValve(from, to, taken), diameterMm };
+}
+
+/** Drag a connector from a node into empty space: the far end becomes a new junction at that point (same elevation as the start). */
+export function connectToNewNode(p: ProjectUI, kind: ConnectKindM, fromUid: string, x: number, y: number, diameterMm?: number): { project: ProjectUI; selectUid: string } {
+  const start = p.nodes.find((n) => n.uid === fromUid);
+  if (!start) throw new Error('The start node no longer exists.');
+  const end = newNode('junction', x, y, p.nodes.map((n) => n.name));
+  end.elevationM = start.elevationM;
+  const e = makeEdge(kind, fromUid, end.uid, p.edges.map((q) => q.name), diameterMm);
+  return { project: { ...p, nodes: [...p.nodes, end], edges: [...p.edges, e] }, selectUid: e.uid };
+}
+
+/**
+ * Place a pump, valve or orifice on its own, anywhere on the canvas: two new junctions 90 px apart (suction on the left,
+ * discharge on the right) joined by the element. Connect those nodes to the rest of the network afterwards.
+ */
+export function placeStandalone(p: ProjectUI, kind: 'pump' | 'valve' | 'orifice', x: number, y: number, elevationM = 0): { project: ProjectUI; selectUid: string } {
+  const names = p.nodes.map((n) => n.name);
+  const mk = (px: number, label: string): NodeUI => {
+    const n = newNode('junction', px, y, names);
+    n.name = uniqueName(label, names);
+    n.elevationM = elevationM;
+    names.push(n.name);
+    return n;
+  };
+  const a = mk(x - 45, kind === 'pump' ? 'Suction' : 'Inlet');
+  const b = mk(x + 45, kind === 'pump' ? 'Discharge' : 'Outlet');
+  const taken = p.edges.map((e) => e.name);
+  const e: EdgeUI = kind === 'pump' ? newPump(a.uid, b.uid, taken) : kind === 'orifice' ? newOrifice(a.uid, b.uid, taken) : newValve(a.uid, b.uid, taken);
+  return { project: { ...p, nodes: [...p.nodes, a, b], edges: [...p.edges, e] }, selectUid: e.uid };
 }
 
 export function defaultPumpCurve() {

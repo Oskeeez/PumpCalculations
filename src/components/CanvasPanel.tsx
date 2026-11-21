@@ -15,6 +15,10 @@ interface Props {
   onCanvasSize: (w: number, h: number) => void;
   onAddImage: (layer: ImageLayer) => void;
   onUpdateImage: (id: string, patch: Partial<ImageLayer>) => void;
+  /** Image currently being adjusted on the canvas (move by dragging, zoom with the wheel or the buttons). */
+  adjustImageId?: string;
+  onAdjust: (id: string | undefined) => void;
+  onZoom: (id: string, factor: number) => void;
   onDeleteImage: (id: string) => void;
   onStartCalib: () => void;
   onApplyCalib: (realMetres: number) => void;
@@ -87,10 +91,17 @@ export function CanvasPanel(p: Props) {
             <li key={im.id}>
               <div className="img-head">
                 <input value={im.name} aria-label="Image name" onChange={(e) => p.onUpdateImage(im.id, { name: e.target.value })} />
-                <label><input type="checkbox" checked={im.locked} onChange={(e) => p.onUpdateImage(im.id, { locked: e.target.checked })} /> Lock</label>
+                <button className={p.adjustImageId === im.id ? 'active primary' : ''} aria-pressed={p.adjustImageId === im.id} onClick={() => p.onAdjust(p.adjustImageId === im.id ? undefined : im.id)} title="Drag the image on the canvas to move it, scroll to zoom">{p.adjustImageId === im.id ? 'Done adjusting' : 'Adjust'}</button>
                 <button onClick={() => p.onUpdateImage(im.id, { x: 0, y: 0, width: p.canvasW, height: Math.round((p.canvasW * im.height) / im.width) })}>Fit width</button>
                 <button onClick={() => p.onDeleteImage(im.id)} aria-label={`Remove ${im.name}`}>Remove</button>
               </div>
+ {p.adjustImageId === im.id && (
+                <div className="calib-box">
+                  <span>Drag the image on the canvas to move it. Scroll over the canvas, or use the buttons, to zoom.</span>
+                  <button onClick={() => p.onZoom(im.id, 1 / 1.1)}>Zoom −</button>
+                  <button onClick={() => p.onZoom(im.id, 1.1)}>Zoom +</button>
+                </div>
+              )}
               <div className="grid">
                 <NumField label="X" unit="px" value={im.x} onChange={(v) => p.onUpdateImage(im.id, { x: v })} />
                 <NumField label="Y" unit="px" value={im.y} onChange={(v) => p.onUpdateImage(im.id, { y: v })} />

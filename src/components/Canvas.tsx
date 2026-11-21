@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { planDistancePx } from '../geometry';
 import type { EdgeUI, InsertKind, NodeKind, NodeUI, ProjectUI } from '../model';
 import type { SystemResult } from '../solver';
@@ -24,6 +24,17 @@ interface Props {
   onMoveNode: (uid: string, x: number, y: number) => void;
   onMoveImage: (id: string, x: number, y: number) => void;
   onConnect: (kind: ConnectKind, from: string, to: string) => void;
+  /** Drag (or click) from a node into empty space: the end of the new pipe/pump/valve becomes a new node there. */
+  onConnectNew: (kind: ConnectKind, from: string, x: number, y: number) => void;
+  /** Place a pump, valve or orifice on its own at a point of empty canvas. */
+  onPlace: (kind: 'pump' | 'valve' | 'orifice', x: number, y: number) => void;
+  /** Swap the flow direction of an element. */
+  onReverse: (uid: string) => void;
+  /** The image being adjusted (move by dragging, zoom with the wheel); all other images ignore the pointer. */
+  adjustImageId?: string;
+  onZoomImage: (id: string, factor: number, cx: number, cy: number) => void;
+  /** Leave image adjust mode. */
+  onAdjustDone?: () => void;
   /** Insert a junction, valve or pump into a pipe at the clicked point. */
   onInsert: (kind: InsertKind, pipeUid: string, x: number, y: number) => void;
   onPending: (uid: string | undefined) => void;
@@ -39,17 +50,17 @@ interface Props {
 const snap = (v: number) => Math.round(v / GRID) * GRID;
 
 const HINTS: Partial<Record<Tool, string>> = {
-  tank: 'Click to place a tank',
+  tank: 'Click empty space to place a tank, or click a pipe to split it with a tank',
   junction: 'Click empty space to place a junction, or click a pipe to split it',
   pipe: 'Drag from node to node',
-  valve: 'Click a pipe to insert a valve, or drag from node to node',
-  orifice: 'Click a pipe to insert an orifice plate, or drag from node to node',
-  pump: 'Click a pipe to insert a pump, or drag from suction node to discharge node',
+  valve: 'Click a pipe to insert a valve, click empty space to place one, or drag from node to node',
+  orifice: 'Click a pipe to insert an orifice plate, click empty space to place one, or drag from node to node',
+  pump: 'Click a pipe to insert a pump, click empty space to place one, or drag from suction to discharge node',
   scale: 'Click two points a known distance apart',
 };
 
 /** Network canvas. Select mode is the default; tools return to it after one use or a click on the background. */
-export function Canvas({ project, result, selection, tool, pending, calib, onSelect, onTool, onAddNode, onMoveNode, onMoveImage, onConnect, onInsert, onPending, onCalibPoint, highlight, removed, readOnly }: Props) {
+export function Canvas({ project, result, selection, tool, pending, calib, onSelect, onTool, onAddNode, onMoveNode, onMoveImage, onConnect, onInsert, onConnectNew, onPlace, onReverse, adjustImageId, onZoomImage, onAdjustDone, onPending, onCalibPoint, highlight, removed, readOnly }: Props) {
   const U = useUnits();
   const W = project.canvasW;
   const H = project.canvasH;
@@ -58,6 +69,23 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
   const [link, setLink] = useState<{ kind: ConnectKind; from: string; sx: number; sy: number; x: number; y: number; moved: boolean; target?: string } | null>(null);
   const nodeById = new Map(project.nodes.map((n) => [n.uid, n]));
   const isConnect = tool === 'pipe' || tool === 'pump' || tool === 'valve' || tool === 'orifice';
+
+  // Wheel zoom of the image being adjusted. Needs a non-passive listener so the page does not scroll.
+  const zoomRef = useRef({ adjustImageId, onZoomImage });
+  zoomRef.current = { adjustImageId, onZoomImage };
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || !adjustImageId) return;
+    const onWheel = (ev: WheelEvent) => {
+      const id = zoomRef.current.adjustImageId;
+      if (!id) return;
+      ev.preventDefault();
+      const r = svg.getBoundingClientRect();
+      zoomRef.current.onZoomImage(id, ev.deltaY < 0 ? 1.08 : 1 / 1.08, ((ev.clientX - r.left) * W) / r.width, ((ev.clientY - r.top) * H) / r.height);
+    };
+    svg.addEventListener('wheel', onWheel, { passive: false });
+    return () => svg.removeEventListener('wheel', onWheel);
+  }, [adjustImageId, W, H]);
 
   const toSvg = (e: { clientX: number; clientY: number }) => {
     const r = (svgRef.current as SVGSVGElement).getBoundingClientRect();
@@ -71,19 +99,23 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     return undefined;
   };
 
+  /** Tools stay active after each placement. Escape, right-click, the tool button again, or another tool ends it. */
   const onBackgroundDown = (e: RPointerEvent) => {
     if (readOnly) return onSelect(null);
+    if (e.button === 2) return;
     const p = toSvg(e);
     if (tool === 'tank' || tool === 'junction') {
       onAddNode(tool, snap(p.x), snap(p.y));
-      onTool('select');
     } else if (tool === 'scale') {
       onCalibPoint(p);
     } else if (tool === 'select') {
       onSelect(null);
-    } else {
+    } else if (pending) {
+      // first node picked, then a click in empty space: the end becomes a new node there
+      onConnectNew(tool as ConnectKind, pending, snap(p.x), snap(p.y));
       onPending(undefined);
-      onTool('select');
+    } else if (tool === 'pump' || tool === 'valve' || tool === 'orifice') {
+      onPlace(tool, snap(p.x), snap(p.y));
     }
   };
 
@@ -99,7 +131,6 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
       if (pending && pending !== n.uid) {
         onConnect(tool as ConnectKind, pending, n.uid);
         onPending(undefined);
-        onTool('select');
         return;
       }
       const p = toSvg(e);
@@ -111,7 +142,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
   };
 
   const onImageDown = (e: RPointerEvent, id: string, x: number, y: number) => {
-    if (tool !== 'select') return;
+    if (tool !== 'select' || adjustImageId !== id) return;
     e.stopPropagation();
     const p = toSvg(e);
     setDrag({ kind: 'image', id, dx: x - p.x, dy: y - p.y });
@@ -136,9 +167,12 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
       if (target && target !== link.from) {
         onConnect(link.kind, link.from, target);
         onPending(undefined);
-        onTool('select');
       } else if (!link.moved || target === link.from) {
-        onPending(link.from); // plain click: pick the second node with another click
+        onPending(link.from); // plain click: pick the second node (or empty space) with another click
+      } else {
+        const p = toSvg(e); // dragged into empty space: the end becomes a new node
+        onConnectNew(link.kind, link.from, Math.max(30, Math.min(W - 30, snap(p.x))), Math.max(30, Math.min(H - 40, snap(p.y))));
+        onPending(undefined);
       }
     }
     setLink(null);
@@ -192,11 +226,10 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     return (
       <g key={e.uid} className={`edge ${e.kind} ${sel ? 'sel' : ''} ${closed ? 'closed' : ''} ${highlight?.get(e.uid) ? `hl-${highlight.get(e.uid)}` : ''}`} onPointerDown={(ev) => {
         if (tool === 'select' || readOnly) { ev.stopPropagation(); onSelect({ type: 'edge', uid: e.uid }); }
-        else if (e.kind === 'pipe' && (tool === 'junction' || tool === 'valve' || tool === 'orifice' || tool === 'pump')) {
+        else if (e.kind === 'pipe' && (tool === 'junction' || tool === 'tank' || tool === 'valve' || tool === 'orifice' || tool === 'pump')) {
           ev.stopPropagation();
           const p = toSvg(ev);
           onInsert(tool, e.uid, p.x, p.y);
-          onTool('select');
         }
       }}>
         <path d={path} className="edge-hit" />
@@ -221,6 +254,22 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
         ) : null}
         <text x={mx} y={my - (e.kind === 'pump' ? 24 : 16)} textAnchor="middle" className="t-name">{e.name}</text>
         {label && <text x={mx} y={my + (e.kind === 'pump' ? 32 : 26)} textAnchor="middle" className="t-res">{label}{sub ? ` · ${sub}` : ''}</text>}
+        {sel && !readOnly && (e.kind === 'pump' || e.kind === 'valve') && (
+          <>
+            {([['from', a, b], ['to', b, a]] as const).map(([which, n, other]) => {
+              const d = Math.hypot(other.x - n.x, other.y - n.y) || 1;
+              const tx = n.x + ((other.x - n.x) / d) * 38;
+              const ty = n.y + ((other.y - n.y) / d) * 38 - 8;
+              const txt = e.kind === 'pump' ? (which === 'from' ? 'SUCTION' : 'DISCHARGE') : which === 'from' ? 'IN' : 'OUT';
+              return <text key={which} x={tx} y={ty} textAnchor="middle" className="t-end">{txt}</text>;
+            })}
+            <g className="reverse-btn" transform={`translate(${mx + 30} ${my - 30})`} onPointerDown={(ev) => { ev.stopPropagation(); onReverse(e.uid); }}>
+              <title>Reverse flow direction</title>
+              <circle r={12} />
+              <text textAnchor="middle" y={5}>⇄</text>
+            </g>
+          </>
+        )}
       </g>
     );
   });
@@ -275,16 +324,28 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
   const from = link ? nodeById.get(link.from) : undefined;
   return (
     <div className="canvas-wrap">
-      {hint && <div className="canvas-hint">{hint}</div>}
+      {adjustImageId && !readOnly && (() => {
+        const im = project.images.find((q) => q.id === adjustImageId);
+        return im ? (
+          <div className="adjust-bar" role="toolbar" aria-label="Adjust image">
+            <span>Adjusting “{im.name}”: drag to move, scroll to zoom</span>
+            <button onClick={() => onZoomImage(im.id, 1 / 1.1, im.x + im.width / 2, im.y + im.height / 2)}>Zoom −</button>
+            <button onClick={() => onZoomImage(im.id, 1.1, im.x + im.width / 2, im.y + im.height / 2)}>Zoom +</button>
+            <button className="primary" onClick={onAdjustDone}>Done</button>
+          </div>
+        ) : null;
+      })()}
+      {hint && <div className="canvas-hint">{hint}. Esc or right-click to stop.</div>}
       <svg
         ref={svgRef}
-        className={`canvas tool-${tool}`}
+        className={`canvas tool-${tool} ${adjustImageId ? 'adjusting' : ''}`}
         width={W}
         height={H}
         viewBox={`0 0 ${W} ${H}`}
         onPointerMove={onMove}
         onPointerUp={onUp}
         onPointerCancel={() => { setDrag(null); setLink(null); }}
+        onContextMenu={(e) => { if (tool !== 'select' && !readOnly) { e.preventDefault(); onPending(undefined); onTool('select'); } }}
         role="application"
         aria-label="Pipe network canvas"
       >
@@ -295,19 +356,21 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
         </defs>
         <rect width={W} height={H} fill="url(#grid)" onPointerDown={onBackgroundDown} />
         {project.images.map((im) => (
-          <image
-            key={im.id}
-            href={im.dataUrl}
-            x={im.x}
-            y={im.y}
-            width={im.width}
-            height={im.height}
-            opacity={im.opacity}
-            preserveAspectRatio="none"
-            className={im.locked ? 'img locked' : 'img'}
-            style={{ pointerEvents: im.locked || tool !== 'select' ? 'none' : 'all' }}
-            onPointerDown={(e) => onImageDown(e, im.id, im.x, im.y)}
-          />
+          <g key={im.id}>
+            <image
+              href={im.dataUrl}
+              x={im.x}
+              y={im.y}
+              width={im.width}
+              height={im.height}
+              opacity={im.opacity}
+              preserveAspectRatio="none"
+              className={adjustImageId === im.id ? 'img adjusting' : 'img'}
+              style={{ pointerEvents: adjustImageId === im.id && tool === 'select' ? 'all' : 'none' }}
+              onPointerDown={(e) => onImageDown(e, im.id, im.x, im.y)}
+            />
+            {adjustImageId === im.id && <rect x={im.x} y={im.y} width={im.width} height={im.height} className="img-frame" />}
+          </g>
         ))}
         {tool === 'scale' && <rect width={W} height={H} fill="transparent" onPointerDown={onBackgroundDown} />}
         {ghostEls}

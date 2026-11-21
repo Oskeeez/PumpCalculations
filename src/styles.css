@@ -111,8 +111,10 @@ tr.bad td { color: var(--err-fg); font-weight: 600; }
 
 /* ---- network canvas ---- */
 .toolbar button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-.workspace { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: start; margin-bottom: 16px; }
-@media (max-width: 1000px) { .workspace { grid-template-columns: minmax(0, 1fr); } }
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr) 6px var(--side-w, 340px); gap: 6px; align-items: start; margin-bottom: 16px; }
+@media (max-width: 1000px) { .workspace { grid-template-columns: minmax(0, 1fr); } .side-handle { display: none; } }
+.side-handle { align-self: stretch; min-height: 120px; cursor: col-resize; border-radius: 3px; background: var(--border); opacity: 0.6; touch-action: none; }
+.side-handle:hover, .side-handle:active { background: var(--accent); opacity: 1; }
 .canvas-wrap { position: relative; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: auto; max-height: 660px; }
 .canvas-hint { position: sticky; left: 0; top: 0; z-index: 1; padding: 6px 12px; font-size: 12px; color: var(--muted); background: var(--panel); border-bottom: 1px solid var(--border); }
 .canvas { display: block; touch-action: none; user-select: none; }
@@ -132,7 +134,7 @@ tr.bad td { color: var(--err-fg); font-weight: 600; }
 .junction { fill: var(--panel); stroke: var(--fg); stroke-width: 2; }
 .t-name { font-weight: 600; font-size: 12px; paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
 .canvas .t-res { font-size: 11px; font-variant-numeric: tabular-nums; paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
-.side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.side { display: flex; flex-direction: column; gap: 12px; min-width: 0; position: sticky; top: 8px; max-height: calc(100vh - 16px); overflow-y: auto; }
 .ends { margin: 8px 0 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
 .ends button { padding: 2px 8px; font-size: 12px; }
 .steps { margin: 6px 0 0; padding-left: 18px; }
@@ -195,7 +197,6 @@ table.cmp tr.sec td { background: color-mix(in srgb, var(--accent) 10%, transpar
 .tabs { display: flex; gap: 4px; margin: 0 0 12px; border-bottom: 1px solid var(--border); }
 .tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 14px; font-weight: 600; color: var(--muted); }
 .tabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
-.workspace.no-side { grid-template-columns: minmax(0, 1fr); }
 .calib-box { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
 .img-list { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 12px; }
 .img-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -254,3 +255,24 @@ table.cmp td.best, table.cmp th.best { background: var(--ok-bg); }
 
 .diff-list label { display: flex; gap: 6px; align-items: baseline; }
 .diff-list input[type=checkbox], .target-row input[type=checkbox], .concepts input[type=checkbox] { width: auto; }
+
+/* canvas: image adjust, direction labels */
+.canvas.adjusting .node, .canvas.adjusting .edge { pointer-events: none; }
+.canvas .img.adjusting { cursor: move; }
+.canvas .img-frame { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 8 6; pointer-events: none; }
+.canvas .t-end { font-size: 10px; font-weight: 700; letter-spacing: 0.5px; fill: var(--accent); paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
+.reverse-btn { cursor: pointer; }
+.reverse-btn circle { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.reverse-btn text { fill: #fff; font-size: 14px; font-weight: 700; }
+.reverse-btn:hover circle { fill: var(--system); }
+
+/* flow direction control */
+.direction { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 6px 0 10px; display: flex; flex-direction: column; gap: 8px; }
+.dir-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.dir-end { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.dir-end small { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
+.dir-arrow { color: var(--accent); font-weight: 700; white-space: nowrap; }
+.empty-side p { margin: 4px 0; }
+
+.adjust-bar { position: sticky; top: 0; z-index: 3; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 6px 10px; background: var(--accent); color: #fff; font-size: 13px; }
+.adjust-bar span { flex: 1; min-width: 160px; }
