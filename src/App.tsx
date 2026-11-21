@@ -629,6 +629,7 @@ export function App() {
       <div className="app">
         <header className="topbar">
           <h1>Pipe Network Calculator</h1>
+          <small className="build-id" title="Version of this build. Compare it with the latest commit on GitHub to check the live site is up to date.">build {typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev'}</small>
           <div className="menu" role="toolbar" aria-label="Project">
             <button onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">↶ Undo</button>
             <button onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)">↷ Redo</button>

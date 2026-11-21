@@ -375,3 +375,5 @@ body.ws-resizing-row { cursor: row-resize; user-select: none; }
 .curve-pick select { width: 100%; }
 .app > .header-fluid, .app > .fluidbar { flex: 0 0 auto; align-items: flex-end; }
 .app > .topbar { flex: 0 0 auto; }
+
+.build-id { color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; white-space: nowrap; }
