@@ -11,6 +11,7 @@ import { NodeEditor, PipeEditor, PumpEditor, ValveEditor } from './components/Ed
 import { FluidBar } from './components/FluidBar';
 import { NetworkToolbar } from './components/NetworkToolbar';
 import { PumpCurvesPanel } from './components/PumpCurvesPanel';
+import { ReportPanel } from './components/ReportPanel';
 import { Results } from './components/Results';
 import { ScenarioPanel } from './components/ScenarioPanel';
 import { SpeedPanel, type SpeedConfig } from './components/SpeedPanel';
@@ -167,7 +168,7 @@ export function App() {
     setMessage(undefined);
     try {
       // panels that are not on screen do not keep their results up to date, so work them out now
-      await exportWorkbook({ project, computed, chartSvg: chart?.exportSvg, sweep: sweep ?? runSweep(), comparison: scenarios.length ? (comparison ?? runComparison()) : undefined });
+      await exportWorkbook({ project, computed, chartSvg: chart?.exportSvg, sweep: sweep ?? runSweep(), comparison: scenarios.length ? (comparison ?? runComparison()) : undefined, targets: targetStatuses });
     } catch (err) {
       setMessage({ kind: 'error', text: `Export failed: ${err instanceof Error ? err.message : String(err)}` });
     }
@@ -371,6 +372,8 @@ export function App() {
         return <SpeedPanel pumps={pumpEdges} config={{ ...speedCfg, pumpUid: speedPumpUid }} onConfig={setSpeedCfg} sweep={sweep} pickId={pick?.id} onPick={startPick} />;
       case 'scenarios':
         return <ScenarioPanel scenarios={scenarios} comparison={comparison ?? runComparison()} onSave={saveScenario} onLoad={loadScenario} onDelete={deleteScenario} onRename={renameScenario} />;
+      case 'report':
+        return <ReportPanel project={project} computed={computed} targets={targetStatuses} buildId={typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev'} />;
       case 'view3d':
         return (
           <Suspense fallback={<p className="hint">Loading 3D view…</p>}>

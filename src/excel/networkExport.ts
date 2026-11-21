@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
-import type { PumpCurveData } from '../model';
+import type { PumpCurveData, PumpCurveEntry } from '../model';
+import type { TargetStatus } from '../ai/types';
 import type { Comparison, SpeedSweep } from '../analysis';
 import { G, P_ATM, pumpHead, tankHead, type SystemModel, type SystemResult } from '../solver';
 
@@ -16,6 +17,12 @@ export interface NetworkExportInput {
   speedChartPngBase64?: string;
   /** Optional scenario comparison (adds a "Scenario comparison" sheet). Values are canonical SI-style units. */
   comparison?: Comparison;
+  /** Optional design targets with their pass/fail from the solver (adds a "Targets" sheet). */
+  targets?: TargetStatus[];
+  /** Optional pump curve library (adds a "Pump curve library" sheet). */
+  curveLibrary?: PumpCurveEntry[];
+  /** Notes from variable-speed control, e.g. a target that could not be reached. */
+  controlNotes?: string[];
 }
 
 type Cell = number | string | { formula: string; result?: number | string };
@@ -429,6 +436,68 @@ export async function buildNetworkWorkbook(x: NetworkExportInput): Promise<Excel
     }
     sc.getColumn(1).width = 40;
     for (let c = 2; c <= 2 + 2 * nC; c++) sc.getColumn(c).width = 22;
+  }
+
+  // ------------------------------------------------------------ Targets
+  if (x.targets && x.targets.length) {
+    const ts = wb.addWorksheet('Targets');
+    ts.getCell('A1').value = 'Design targets';
+    ts.getCell('A1').font = { bold: true, size: 14 };
+    ts.getCell('A2').value = 'Pass or fail is worked out by the solver for the network as exported. Pressures are gauge.';
+    ts.getCell('A2').font = NOTE;
+    header(ts, 3, ['Target', 'Result', 'Actual vs required', 'Shortfall', 'Unit']);
+    x.targets.forEach((t, i) => {
+      const row = 4 + i;
+      ts.getCell(row, 1).value = t.label;
+      ts.getCell(row, 2).value = t.pass ? 'PASS' : 'FAIL';
+      ts.getCell(row, 2).font = { bold: true, color: { argb: t.pass ? 'FF17612F' : 'FF9B1C14' } };
+      ts.getCell(row, 3).value = t.text;
+      ts.getCell(row, 4).value = t.pass ? 0 : Math.round(t.shortfall * 1000) / 1000;
+      ts.getCell(row, 5).value = t.unit;
+    });
+    ts.getColumn(1).width = 40;
+    ts.getColumn(2).width = 10;
+    ts.getColumn(3).width = 52;
+    ts.getColumn(4).width = 12;
+    ts.getColumn(5).width = 10;
+  }
+
+  // ------------------------------------------------------------ Pump curve library
+  if (x.curveLibrary && x.curveLibrary.length) {
+    const cl = wb.addWorksheet('Pump curve library');
+    cl.getCell('A1').value = 'Pump curve library (flow L/s, head m, efficiency %, NPSHr m)';
+    cl.getCell('A1').font = { bold: true, size: 14 };
+    let row = 2;
+    for (const c of x.curveLibrary) {
+      row += 2;
+      cl.getCell(row, 1).value = c.name;
+      cl.getCell(row, 1).font = BOLD;
+      cl.getCell(row, 3).value = `Rated speed ${c.ratedRpm} rpm`;
+      cl.getCell(row, 3).font = NOTE;
+      row += 1;
+      header(cl, row, ['Flow [L/s]', 'Head [m]', 'Efficiency [%]', 'NPSHr [m]']);
+      const flows = [...new Set([...c.head.map((p) => p.q), ...c.efficiency.map((p) => p.q), ...c.npshr.map((p) => p.q)])].sort((a, b) => a - b);
+      for (const q of flows) {
+        row += 1;
+        cl.getCell(row, 1).value = q;
+        const h = c.head.find((p) => p.q === q);
+        const e = c.efficiency.find((p) => p.q === q);
+        const n = c.npshr.find((p) => p.q === q);
+        if (h) cl.getCell(row, 2).value = h.h;
+        if (e) cl.getCell(row, 3).value = e.eta;
+        if (n) cl.getCell(row, 4).value = n.h;
+      }
+    }
+    for (let i = 1; i <= 4; i++) cl.getColumn(i).width = 18;
+  }
+
+  // ------------------------------------------------------------ control notes on the inputs sheet
+  if (x.controlNotes && x.controlNotes.length) {
+    section('Pump speed control notes');
+    for (const n of x.controlNotes) {
+      r += 1;
+      inp.getCell(r, 1).value = n;
+    }
   }
   return wb;
 }

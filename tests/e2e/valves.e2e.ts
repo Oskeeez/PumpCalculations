@@ -43,3 +43,16 @@ describe('valve sizing and pipe rating', () => {
     await s.close();
   });
 });
+
+describe('report', () => {
+  it('shows a printable summary with a print button', async () => {
+    const s = await open(app);
+    await s.page.getByRole('tab', { name: /^Report/ }).click();
+    await s.page.waitForSelector('.report-preview .rp');
+    expect(await s.page.locator('.report-preview h1').textContent()).toBe('Pipe network report');
+    expect(await s.page.locator('.report-preview table').count()).toBeGreaterThan(3);
+    expect(await s.page.getByRole('button', { name: /Print/ }).count()).toBe(1);
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+});
