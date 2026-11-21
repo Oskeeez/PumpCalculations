@@ -85,9 +85,18 @@ A pump is fitted at rated speed with a least-squares quadratic through the head 
 
 **Power**: hydraulic `rho g Q H`; shaft = hydraulic / efficiency (when efficiency data exist).
 
+**Switching a pump off** (standby) removes it from the network, like a closed valve: it carries nothing, the result says "switched off", and other pumps take over.
+
+**Variable-speed control**: instead of typing a speed ratio, a pump can hold a flow through itself, or the gauge pressure at a chosen node. The solver is not changed; a wrapper searches the speed ratio between a slowest and fastest limit with Brent's method, re-solving the whole network each time (the held quantity rises with speed). The speed it finds is shown. If the target is out of reach, the pump runs at the limit that gets closest and a note says so; this is not an error. With several controlled pumps each is adjusted in turn until the speeds stop changing. A speed sweep ignores the control so that every speed is really tried. Control finds a steady-state operating point: it does not model the drive's response over time.
+
+## Sizing helpers
+
+- **Control valve**: `Cv = Q[gpm] / sqrt(dP[psi] / SG)` and `Kv = Q[m3/h] / sqrt(dP[bar] / SG)`, with `SG = rho / 999`. This is the flow coefficient needed fully open; it does not size for travel, noise or cavitation limits.
+- **Orifice plate**: solves `K_permanent(beta) = dP / (rho v^2 / 2)` for beta by Brent's method at the design flow, where `v` is the velocity in the pipe, and reports the bore, the bore velocity and the larger differential pressure a flow meter would read across the plate. It reports when no plate can give the requested drop, and warns when beta is outside 0.2 to 0.75 or the bore velocity exceeds 12 m/s.
+
 ## Design alerts
 
-Velocity above the limit set in the top bar (0 = off) is flagged on pipes and valves. Warnings are also raised for sub-atmospheric pressure, pressure below vapour pressure, a closed check valve, transitional flow, a pump with no forward flow and a pump beyond its curve data.
+Velocity above the limit set in the top bar (0 = off) is flagged on pipes and valves. A pipe can carry an optional pressure rating (entered by you; the app has no pressure-class data): an alert is raised when the solved pressure at either end exceeds it. Warnings are also raised for sub-atmospheric pressure, pressure below vapour pressure, a closed check valve, transitional flow, a pump with no forward flow and a pump beyond its curve data.
 
 ## How it is checked
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { P_ATM, fitPump, fluidAt, solveSystem, type SysEdge, type SysNode, type SystemModel } from '../../src/solver';
+import { P_ATM, fitPump, fluidAt, solveSystem, type SysEdge, type SysNode, type SysPump, type SystemModel } from '../../src/solver';
 
 const water = fluidAt('water', 20);
 const tank = (id: string, level: number, z = 0): SysNode => ({ kind: 'tank', id, elevationM: z, liquidLevelM: level, surfacePressurePa: P_ATM });
@@ -126,5 +126,87 @@ describe('input checks give readable errors', () => {
     expect(() => solve([tank('A', 10), tank('B', 0)], [pipe('p', 'A', 'B', 100, 0)])).toThrow(/diameter/i);
     expect(() => solve([tank('A', 10), tank('B', 0)], [pipe('p', 'A', 'B', -5, 100)])).toThrow(/length/i);
     expect(() => solve([junction('A'), junction('B')], [pipe('p', 'A', 'B', 100, 100)])).toThrow(/tank/i);
+  });
+});
+
+import { solveWithSpeedControl } from '../../src/solver';
+
+describe('pump on / off', () => {
+  const nodes = [tank('A', 0), tank('B', 20), junction('S'), junction('D')];
+  const edges = (run1: boolean, run2: boolean): SysEdge[] => [
+    pipe('suction', 'A', 'S', 5, 150),
+    { ...(pump('p1', 'S', 'D', 40, 20) as SysPump), running: run1 },
+    { ...(pump('p2', 'S', 'D', 40, 20) as SysPump), running: run2 },
+    pipe('delivery', 'D', 'B', 300, 150),
+  ];
+
+  it('a switched-off pump carries nothing and the other pump takes over', () => {
+    const both = solve(nodes, edges(true, true));
+    const one = solve(nodes, edges(true, false));
+    expect(one.converged).toBe(true);
+    expect(flow(one, 'p2')).toBe(0);
+    expect(one.pumps.find((p) => p.id === 'p2')!.warnings.join(' ')).toMatch(/switched off/);
+    expect(flow(one, 'p1')).toBeGreaterThan(flow(both, 'p1')); // alone it runs further out on its curve
+    expect(flow(both, 'p1')).toBeCloseTo(flow(both, 'p2'), 6);
+  });
+
+  it('switching every pump off leaves a standing network with no flow', () => {
+    const none = solve(nodes, edges(false, false));
+    expect(Math.abs(flow(none, 'delivery'))).toBeLessThan(1e-6);
+  });
+});
+
+describe('variable-speed control', () => {
+  const nodes = [tank('A', 0), tank('B', 15), junction('S'), junction('D', 0, 0)];
+  const edges: SysEdge[] = [pipe('suction', 'A', 'S', 5, 150), pump('p1', 'S', 'D', 60, 30), pipe('delivery', 'D', 'B', 400, 150)];
+  const model = { fluid: water, nodes, edges } as SystemModel;
+  const pumpFlow = (r: ReturnType<typeof solveWithSpeedControl>) => r.result.pumps[0].flowM3s * 1000;
+
+  it('finds the speed that holds a flow, and the result really has that flow', () => {
+    const r = solveWithSpeedControl(model, [{ pumpId: 'p1', target: { kind: 'flow', m3s: 0.015 }, minRatio: 0.3, maxRatio: 1.2 }]);
+    expect(pumpFlow(r)).toBeCloseTo(15, 3);
+    const speed = r.speeds.get('p1')!;
+    expect(speed).toBeGreaterThan(0.3);
+    expect(speed).toBeLessThan(1.2);
+    expect(r.notes).toEqual([]);
+    expect(r.result.pumps[0].speedRatio).toBeCloseTo(speed, 9);
+    // a lower flow needs a lower speed (affinity laws: the pump slows down)
+    const lower = solveWithSpeedControl(model, [{ pumpId: 'p1', target: { kind: 'flow', m3s: 0.01 }, minRatio: 0.3, maxRatio: 1.2 }]);
+    expect(lower.speeds.get('p1')!).toBeLessThan(speed);
+  });
+
+  it('finds the speed that holds a pressure at a node', () => {
+    const r = solveWithSpeedControl(model, [{ pumpId: 'p1', target: { kind: 'pressure', nodeId: 'D', pa: 250_000 }, minRatio: 0.3, maxRatio: 1.2 }]);
+    const d = r.result.nodes.find((n) => n.id === 'D')!;
+    expect(d.gaugePressurePa).toBeCloseTo(250_000, -1);
+    expect(r.notes).toEqual([]);
+  });
+
+  it('runs at the maximum speed and says so when the target cannot be reached', () => {
+    const r = solveWithSpeedControl(model, [{ pumpId: 'p1', target: { kind: 'flow', m3s: 0.2 }, minRatio: 0.3, maxRatio: 1 }]);
+    expect(r.speeds.get('p1')).toBe(1);
+    expect(r.notes[0]).toMatch(/maximum speed.*cannot reach 200\.0 L\/s/);
+  });
+
+  it('runs at the minimum speed and says so when the pump cannot go slow enough', () => {
+    const r = solveWithSpeedControl(model, [{ pumpId: 'p1', target: { kind: 'flow', m3s: 0.0001 }, minRatio: 0.9, maxRatio: 1.2 }]);
+    expect(r.speeds.get('p1')).toBe(0.9);
+    expect(r.notes[0]).toMatch(/minimum speed/);
+  });
+
+  it('rejects bad limits and unknown pumps with readable messages', () => {
+    expect(() => solveWithSpeedControl(model, [{ pumpId: 'p1', target: { kind: 'flow', m3s: 0.01 }, minRatio: 1, maxRatio: 0.5 }])).toThrow(/speed limits/);
+    expect(() => solveWithSpeedControl(model, [{ pumpId: 'nope', target: { kind: 'flow', m3s: 0.01 }, minRatio: 0.3, maxRatio: 1 }])).toThrow(/not in the model/);
+    expect(() => solveWithSpeedControl(model, [{ pumpId: 'p1', target: { kind: 'pressure', nodeId: 'ghost', pa: 1 }, minRatio: 0.3, maxRatio: 1 }])).toThrow(/control node/);
+  });
+
+  it('two pumps in parallel under control each reach their own flow', () => {
+    const two = { fluid: water, nodes, edges: [pipe('suction', 'A', 'S', 5, 200), pump('p1', 'S', 'D', 60, 30), pump('p2', 'S', 'D', 60, 30), pipe('delivery', 'D', 'B', 400, 200)] } as SystemModel;
+    const r = solveWithSpeedControl(two, [
+      { pumpId: 'p1', target: { kind: 'flow', m3s: 0.012 }, minRatio: 0.3, maxRatio: 1.2 },
+      { pumpId: 'p2', target: { kind: 'flow', m3s: 0.018 }, minRatio: 0.3, maxRatio: 1.2 },
+    ]);
+    expect(r.result.pumps.find((p) => p.id === 'p1')!.flowM3s * 1000).toBeCloseTo(12, 2);
+    expect(r.result.pumps.find((p) => p.id === 'p2')!.flowM3s * 1000).toBeCloseTo(18, 2);
   });
 });

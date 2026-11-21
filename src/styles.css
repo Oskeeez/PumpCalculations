@@ -392,3 +392,13 @@ body.ws-resizing-row { cursor: row-resize; user-select: none; }
 .field-pick .field { flex: 1; min-width: 0; }
 
 .side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* pump on/off and speed control */
+.pump-ctl { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 6px 0 10px; display: flex; flex-direction: column; gap: 8px; }
+.pump-ctl .check { display: flex; gap: 8px; align-items: center; }
+.pump-ctl .check input { width: auto; }
+.canvas .edge.off .pump { fill: var(--panel); stroke: var(--muted); }
+.canvas .edge.off .pump-icon { fill: var(--muted); }
+.canvas .edge.off .edge-line { stroke: var(--muted); }
+
+.sizing { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; margin: 6px 0 10px; }
+.sizing summary { cursor: pointer; font-weight: 600; }

@@ -267,8 +267,9 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     const ang = dirDeg + (q < 0 ? 180 : 0);
     const sel = selection?.type === 'edge' && selection.uid === e.uid;
     const closed = e.kind === 'valve' && (!e.open || (pr !== undefined && 'status' in pr && (pr.status === 'check-closed' || pr.status === 'closed')));
-    const label = closed ? (e.kind === 'valve' && !e.open ? 'closed' : pr && 'status' in pr && pr.status === 'closed' ? 'closed (reverse blocked)' : 'check closed') : pr && flowing ? U.fu('flow', Math.abs(q) * 1000, 2) : pr ? `0 ${U.u('flow')}` : '';
-    const sub = closed
+    const off = e.kind === 'pump' && e.running === false;
+    const label = off ? 'OFF' : closed ? (e.kind === 'valve' && !e.open ? 'closed' : pr && 'status' in pr && pr.status === 'closed' ? 'closed (reverse blocked)' : 'check closed') : pr && flowing ? U.fu('flow', Math.abs(q) * 1000, 2) : pr ? `0 ${U.u('flow')}` : '';
+    const sub = closed || off
       ? ''
       : pr && e.kind === 'pipe' && 'flow' in pr
         ? U.fu('velocity', pr.flow.velocity, 2)
@@ -280,7 +281,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
     return (
       <g
         key={e.uid}
-        className={`edge ${e.kind} ${sel ? 'sel' : ''} ${closed ? 'closed' : ''} ${edgePickable(e) ? 'pickable' : ''} ${highlight?.get(e.uid) ? `hl-${highlight.get(e.uid)}` : ''}`}
+        className={`edge ${e.kind} ${sel ? 'sel' : ''} ${closed || off ? 'closed' : ''} ${off ? 'off' : ''} ${edgePickable(e) ? 'pickable' : ''} ${highlight?.get(e.uid) ? `hl-${highlight.get(e.uid)}` : ''}`}
         onPointerDown={(ev) => {
           if (pick) {
             ev.stopPropagation();

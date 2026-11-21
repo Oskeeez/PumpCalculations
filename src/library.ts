@@ -65,6 +65,43 @@ export const FITTINGS: readonly FittingPreset[] = [
   { name: 'Swing check valve', k: 2.0 },
 ];
 
+const IN_MM = 25.4;
+const fromInches = (rows: [string, number][]): NominalSize[] => rows.map(([nps, id]) => ({ nps, idMm: Math.round(id * IN_MM * 100) / 100 }));
+
+/** ASME B36.10M Schedule 80 steel pipe inside diameters. */
+export const SCH80: readonly NominalSize[] = fromInches([
+  ['1/2"', 0.546], ['3/4"', 0.742], ['1"', 0.957], ['1-1/4"', 1.278], ['1-1/2"', 1.5], ['2"', 1.939], ['2-1/2"', 2.323],
+  ['3"', 2.9], ['4"', 3.826], ['5"', 4.813], ['6"', 5.761], ['8"', 7.625], ['10"', 9.562], ['12"', 11.374],
+]);
+
+/** Copper tube Type L (ASTM B88), nominal sizes with typical inside diameters. */
+export const COPPER_L: readonly NominalSize[] = fromInches([
+  ['1/2"', 0.545], ['3/4"', 0.785], ['1"', 1.025], ['1-1/4"', 1.265], ['1-1/2"', 1.505], ['2"', 1.985], ['2-1/2"', 2.465], ['3"', 2.945], ['4"', 3.905],
+]);
+
+export interface PipeSeries {
+  id: string;
+  label: string;
+  sizes: readonly NominalSize[];
+}
+
+/** Standard pipe size series for the pipe editor. Typical inside diameters: check against the pipe you will buy. */
+export const PIPE_SERIES: readonly PipeSeries[] = [
+  { id: 'sch40', label: 'Sch 40 steel', sizes: SCH40 },
+  { id: 'sch80', label: 'Sch 80 steel', sizes: SCH80 },
+  { id: 'copperL', label: 'Copper, Type L', sizes: COPPER_L },
+];
+
+/** The series and nominal size whose inside diameter is within 1 % of the given one, if any. */
+export function matchPipeSize(idMm: number, preferred?: string): { series: string; nps: string } | undefined {
+  const order = [...PIPE_SERIES].sort((a, b) => (a.id === preferred ? -1 : b.id === preferred ? 1 : 0));
+  for (const series of order) {
+    const hit = series.sizes.find((s) => Math.abs(s.idMm - idMm) / s.idMm < 0.01);
+    if (hit) return { series: series.id, nps: hit.nps };
+  }
+  return undefined;
+}
+
 /** Closest Schedule 40 nominal size to a diameter, if within 1 %. */
 export function matchSize(idMm: number): string | undefined {
   return SCH40.find((s) => Math.abs(s.idMm - idMm) / s.idMm < 0.01)?.nps;

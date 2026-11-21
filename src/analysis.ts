@@ -46,7 +46,7 @@ export function speedSweep(project: ProjectUI, pumpUid: string, ratios: number[]
   if (!pump || pump.kind !== 'pump') return undefined;
   const rows: SpeedRow[] = [];
   const series: ChartSeries[] = [];
-  const results = ratios.map((r) => ({ r, c: compute({ ...project, edges: project.edges.map((e) => (e.uid === pumpUid ? { ...e, speedRatio: r } : e)) }) }));
+  const results = ratios.map((r) => ({ r, c: compute({ ...project, edges: project.edges.map((e) => (e.uid === pumpUid ? { ...e, speedRatio: r, control: undefined } : e)) }) }));
   const maxRatio = Math.max(...ratios, 1e-9);
   // common flow axis for every curve
   const first = results.find((x) => x.c.model);

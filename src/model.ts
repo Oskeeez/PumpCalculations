@@ -12,6 +12,8 @@ import {
   P_ATM,
   fitPump,
   fluidAt,
+  solveWithSpeedControl,
+  type SpeedControl,
   pumpHead,
   solveSystem,
   type FluidId,
@@ -61,6 +63,8 @@ export interface PipeUI {
   diameterMm: number;
   roughnessMm: number;
   fittings: FittingUI[];
+  /** Optional pressure rating [kPa gauge]. An alert is raised when the solved pressure at either end exceeds it. */
+  ratingKPaG?: number;
 }
 
 export interface PumpUI {
@@ -79,7 +83,18 @@ export interface PumpUI {
   impellerTrim?: number;
   /** Library curve this pump's data was taken from (its points are copied into head/efficiency/npshr). Cleared when edited by hand. */
   curveId?: string;
+  /** false = switched off (standby). Default true. */
+  running?: boolean;
+  /** Variable-speed control: the solver sets the speed ratio to hold a flow or a node pressure (speedRatio is then the solved result). */
+  control?: PumpControl;
 }
+
+/** Variable-speed pump control. Pressure is gauge [kPa], flow [L/s]. The speed stays between minRatio and maxRatio. */
+export type PumpControl =
+  | { mode: 'pressure'; nodeUid: string; kPaG: number; minRatio: number; maxRatio: number }
+  | { mode: 'flow'; lps: number; minRatio: number; maxRatio: number };
+
+export const defaultControl = (nodeUid: string): PumpControl => ({ mode: 'pressure', nodeUid, kPaG: 200, minRatio: 0.5, maxRatio: 1 });
 
 /** A named, reusable pump curve (flow L/s, head m, efficiency %, NPSHr m). */
 export interface PumpCurveEntry {
@@ -483,6 +498,12 @@ export function toSystemModel(p: HydraulicProject): SystemModel {
     }
     if (!(e.speedRatio > 0)) throw new Error(`${e.name}: speed ratio must be > 0.`);
     if (e.head.length < 2 || new Set(e.head.map((x) => x.q)).size < 2) throw new Error(`${e.name}: head curve needs at least 2 points with different flows.`);
+    if (e.control) {
+      const c = e.control;
+      if (!(c.minRatio > 0) || !(c.maxRatio > c.minRatio)) throw new Error(`${e.name}: speed limits must satisfy 0 < minimum < maximum.`);
+      if (c.mode === 'flow' && !(c.lps > 0)) throw new Error(`${e.name}: the flow to hold must be greater than 0.`);
+      if (c.mode === 'pressure' && (!Number.isFinite(c.kPaG) || !nameOf.has(c.nodeUid))) throw new Error(`${e.name}: choose a node and a pressure to hold.`);
+    }
     const trim = e.impellerTrim ?? 1;
     if (!(trim > 0 && trim <= 1.0001)) throw new Error(`${e.name}: impeller trim must be between 0 and 1.`);
     const model: PumpModel = fitPump({
@@ -490,7 +511,7 @@ export function toSystemModel(p: HydraulicProject): SystemModel {
       efficiency: e.efficiency.length >= 2 ? e.efficiency.map((x) => ({ flowM3s: (x.q / 1000) * trim, eta: x.eta / 100 })) : undefined,
       npshr: e.npshr.length >= 2 ? e.npshr.map((x) => ({ flowM3s: (x.q / 1000) * trim, npshrM: x.h * trim * trim })) : undefined,
     });
-    return { kind: 'pump', id: e.name, from, to, model, speedRatio: e.speedRatio };
+    return { kind: 'pump', id: e.name, from, to, model, speedRatio: e.speedRatio, running: e.running !== false };
   });
   return { fluid, nodes, edges };
 }
@@ -515,8 +536,29 @@ export interface Computed {
 
 export function compute(p: HydraulicProject): Computed {
   try {
-    const model = toSystemModel(p);
-    const result = solveSystem(model, { npshMarginM: p.npshMarginM });
+    let model = toSystemModel(p);
+    const opts = { npshMarginM: p.npshMarginM };
+    const controls: SpeedControl[] = [];
+    for (const e of p.edges) {
+      if (e.kind !== 'pump' || !e.control || e.running === false) continue;
+      const c = e.control;
+      controls.push({
+        pumpId: e.name,
+        minRatio: c.minRatio,
+        maxRatio: c.maxRatio,
+        target: c.mode === 'flow' ? { kind: 'flow', m3s: c.lps / 1000 } : { kind: 'pressure', nodeId: p.nodes.find((n) => n.uid === c.nodeUid)?.name ?? '', pa: c.kPaG * 1000 },
+      });
+    }
+    let result: SystemResult;
+    const controlNotes: string[] = [];
+    if (controls.length) {
+      const solved = solveWithSpeedControl(model, controls, opts);
+      model = solved.model;
+      result = solved.result;
+      controlNotes.push(...solved.notes);
+    } else {
+      result = solveSystem(model, opts);
+    }
     const pumpCurves: PumpCurveData[] = [];
     for (const e of model.edges) {
       if (e.kind !== 'pump') continue;
@@ -533,6 +575,16 @@ export function compute(p: HydraulicProject): Computed {
     if (p.maxVelocityMps > 0) {
       for (const x of result.pipes) if (x.flow.velocity > p.maxVelocityMps) alerts.push(`Pipe "${x.id}": velocity ${x.flow.velocity.toFixed(2)} m/s exceeds the ${p.maxVelocityMps} m/s limit.`);
       for (const x of result.valves) if (x.velocity > p.maxVelocityMps) alerts.push(`Valve "${x.id}": velocity ${x.velocity.toFixed(2)} m/s exceeds the ${p.maxVelocityMps} m/s limit.`);
+    }
+    alerts.unshift(...controlNotes);
+    // pipes with a pressure rating: the highest pressure is at one of the end nodes (or at the lowest end when the pipe falls)
+    for (const e of p.edges) {
+      if (e.kind !== 'pipe' || !(e.ratingKPaG !== undefined && e.ratingKPaG > 0)) continue;
+      for (const uid of [e.from, e.to]) {
+        const node = p.nodes.find((n) => n.uid === uid);
+        const gauge = node ? result.nodes.find((x) => x.id === node.name)?.gaugePressurePa : undefined;
+        if (node && gauge !== undefined && gauge / 1000 > e.ratingKPaG) alerts.push(`Pipe "${e.name}": pressure ${(gauge / 1000).toFixed(0)} kPa at "${node.name}" exceeds its rating of ${e.ratingKPaG} kPa.`);
+      }
     }
     return { model, result, pumpCurves, alerts };
   } catch (err) {

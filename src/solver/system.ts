@@ -57,6 +57,8 @@ export interface SysPump {
   to: string;
   model: PumpModel;
   speedRatio: number;
+  /** false = switched off (standby): the pump is removed from the network, like a closed valve. Default true. */
+  running?: boolean;
 }
 
 export interface SysValve {
@@ -194,7 +196,7 @@ export function buildNetwork(m: SystemModel, mods: BuildMods = {}): Network {
       return { id: n.id, demandM3s: n.demandM3s + (mods.extraDemand?.get(n.id) ?? 0) };
     }),
     edges: m.edges
-      .filter((e) => !removed.has(e.id) && !(e.kind === 'valve' && !e.spec.open))
+      .filter((e) => !removed.has(e.id) && !(e.kind === 'valve' && !e.spec.open) && !(e.kind === 'pump' && e.running === false))
       .map((e) => ({
         id: e.id,
         from: e.from,
@@ -441,7 +443,9 @@ export function solveSystem(m: SystemModel, opts: SystemOptions = {}): SystemRes
     const eta = forward ? pumpEfficiency(e.model, q, e.speedRatio) : undefined;
     const npshr = forward ? pumpNpshr(e.model, q, e.speedRatio) : undefined;
     const w: string[] = [];
-    if (!forward) {
+    if (e.running === false) {
+      w.push(`Pump "${e.id}": switched off.`);
+    } else if (!forward) {
       w.push(
         head > pumpShutoffHead(e.model, e.speedRatio)
           ? `Pump "${e.id}": no flow. The head across it (${head.toFixed(1)} m) exceeds its shutoff head, so the check valve is closed.`

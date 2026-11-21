@@ -46,3 +46,24 @@ describe('pump curve library', () => {
     await s.close();
   });
 });
+
+describe('pump on / off and speed control', () => {
+  it('switches a pump off, and lets the speed be set by a held flow', async () => {
+    const s = await open(app);
+    await s.page.locator('g.edge.pump .edge-line').first().click({ force: true });
+    // hold a flow: the speed is then found, not typed
+    await s.page.locator('select[aria-label="Speed control"]').selectOption('flow');
+    await s.page.waitForSelector('.pump-ctl .hint');
+    expect(await s.page.locator('.pump-ctl .hint').textContent()).toMatch(/Speed found: [\d.]+ %/);
+    expect(await s.page.locator('input[aria-label="Speed ratio (set by control)"]').count()).toBe(1);
+    await s.page.locator('select[aria-label="Speed control"]').selectOption('fixed');
+    expect(await s.page.locator('input[aria-label="Speed ratio (set by control)"]').count()).toBe(0);
+
+    // switch the only pump off: the network stops and the pump is marked OFF
+    await s.page.getByLabel(/Running/).uncheck();
+    await s.page.waitForSelector('g.edge.pump.off');
+    expect(((await s.page.locator('g.edge.pump text.t-res').first().textContent()) ?? '').trim()).toBe('OFF');
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+});

@@ -1,5 +1,7 @@
-import { FITTINGS, MATERIALS, SCH40, matchMaterial, matchSize } from '../library';
-import type { FittingUI, NodeUI, PipeUI, PumpCurveEntry, PumpUI, ValveControlType, ValveLossType, ValveUI } from '../model';
+import { useState, type ReactNode } from 'react';
+import { FITTINGS, MATERIALS, PIPE_SERIES, matchMaterial, matchPipeSize } from '../library';
+import { defaultControl, type FittingUI, type NodeUI, type PipeUI, type PumpControl, type PumpCurveEntry, type PumpUI, type ValveControlType, type ValveLossType, type ValveUI } from '../model';
+import { orificeBoreForDrop, requiredCv, requiredKv } from '../sizing';
 import { useUnits, type Quantity } from '../units';
 import { NumField } from './NumField';
 
@@ -61,6 +63,9 @@ export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: 
   const U = useUnits();
   const setFit = (i: number, f: FittingUI) => onChange({ ...pipe, fittings: pipe.fittings.map((x, j) => (j === i ? f : x)) });
   const total = pipe.fittings.reduce((s, f) => s + f.k, 0);
+  const matched = matchPipeSize(pipe.diameterMm);
+  const [series, setSeries] = useState(matched?.series ?? 'sch40');
+  const seriesDef = PIPE_SERIES.find((x) => x.id === series) ?? PIPE_SERIES[0];
   return (
     <section className="editor">
       <h3>Pipe</h3>
@@ -97,12 +102,24 @@ export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: 
           </select>
         </label>
         <label className="field">
-          <span>Nominal size (Sch 40 steel)</span>
-          <select value={matchSize(pipe.diameterMm) ?? ''} onChange={(e) => { const s = SCH40.find((x) => x.nps === e.target.value); if (s) onChange({ ...pipe, diameterMm: s.idMm }); }}>
-            <option value="">Custom</option>
-            {SCH40.map((s) => <option key={s.nps} value={s.nps}>{s.nps} ({U.f('diameter', s.idMm, 2)} {U.u('diameter')} ID)</option>)}
+          <span>Size series</span>
+          <select value={series} onChange={(e) => setSeries(e.target.value)} aria-label="Pipe size series">
+            {PIPE_SERIES.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
           </select>
         </label>
+        <label className="field">
+          <span>Nominal size</span>
+          <select value={matched?.series === series ? matched.nps : ''} aria-label="Nominal pipe size" onChange={(e) => { const sz = seriesDef.sizes.find((x) => x.nps === e.target.value); if (sz) onChange({ ...pipe, diameterMm: sz.idMm }); }}>
+            <option value="">Custom</option>
+            {seriesDef.sizes.map((sz) => <option key={sz.nps} value={sz.nps}>{sz.nps} ({U.f('diameter', sz.idMm, 2)} {U.u('diameter')} ID)</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="grid">
+        <div className="field opt">
+          <label><input type="checkbox" checked={pipe.ratingKPaG !== undefined} onChange={(e) => onChange({ ...pipe, ratingKPaG: e.target.checked ? 1000 : undefined })} /> Pressure rating (gauge)</label>
+          {pipe.ratingKPaG !== undefined && <NumField q="pressure" value={pipe.ratingKPaG} onChange={(v) => v > 0 && onChange({ ...pipe, ratingKPaG: v })} title="An alert is raised when the pressure at either end of this pipe is higher" />}
+        </div>
       </div>
       <h4>Fittings (K values), total K = {total.toFixed(2)}</h4>
       <table className="pts">
@@ -137,7 +154,53 @@ export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: 
   );
 }
 
-export function ValveEditor({ valve, from, to, onChange }: { valve: ValveUI; from: string; to: string; onChange: (v: ValveUI) => void }) {
+/** "Size this valve": the Cv or Kv a control valve needs, or the bore an orifice needs, for a wanted drop at a design flow. */
+function SizingHelper({ valve, onChange, designFlowLps, density }: { valve: ValveUI; onChange: (v: ValveUI) => void; designFlowLps: number; density: number }) {
+  const U = useUnits();
+  const [flow, setFlow] = useState(designFlowLps > 0 ? designFlowLps : 10);
+  const [drop, setDrop] = useState(50);
+  const orifice = valve.lossType === 'orifice';
+  let body: ReactNode;
+  try {
+    if (orifice) {
+      const r = orificeBoreForDrop(flow, drop, valve.diameterMm, density, valve.orificeCd);
+      body = (
+        <>
+          <p>Bore needed: <b>{U.fu('diameter', r.boreMm, 2)}</b> (beta {r.beta.toFixed(2)}), velocity through it {U.fu('velocity', r.boreVelocityMps, 1)}. A flow meter across the plate would read {U.fu('pressure', r.measuredDropKPa, 1)}.</p>
+          {r.warnings.map((w) => <div key={w} className="banner warn">{w}</div>)}
+          <button onClick={() => onChange({ ...valve, lossValue: r.boreMm })}>Use this bore</button>
+        </>
+      );
+    } else {
+      const cv = requiredCv(flow, drop, density);
+      const kv = requiredKv(flow, drop, density);
+      body = (
+        <>
+          <p>Needs <b>Cv {cv.toFixed(1)}</b> (Kv {kv.toFixed(1)}) when fully open for this flow and drop.</p>
+          <div className="toolbar">
+            <button onClick={() => onChange({ ...valve, lossType: 'Cv', lossValue: cv })}>Use Cv {cv.toFixed(1)}</button>
+            <button onClick={() => onChange({ ...valve, lossType: 'Kv', lossValue: kv })}>Use Kv {kv.toFixed(1)}</button>
+          </div>
+        </>
+      );
+    }
+  } catch (err) {
+    body = <div className="banner warn">{err instanceof Error ? err.message : String(err)}</div>;
+  }
+  return (
+    <details className="sizing">
+      <summary>Size this {orifice ? 'orifice' : 'valve'}</summary>
+      <p className="hint">Enter the flow it must pass and the pressure it should burn. The calculation uses the fluid density ({U.fu('density', density, 0)}).</p>
+      <div className="grid">
+        <NumField label="Design flow" q="flow" value={flow} onChange={(v) => v > 0 && setFlow(v)} />
+        <NumField label={orifice ? 'Permanent pressure loss' : 'Pressure drop'} q="pressure" value={drop} onChange={(v) => v > 0 && setDrop(v)} />
+      </div>
+      {body}
+    </details>
+  );
+}
+
+export function ValveEditor({ valve, from, to, onChange, designFlowLps = 0, density = 998 }: { valve: ValveUI; from: string; to: string; onChange: (v: ValveUI) => void; designFlowLps?: number; density?: number }) {
   const unit = valve.lossType === 'orifice' ? '' : valve.lossType === 'K' ? '–' : valve.lossType === 'Cv' ? 'gpm @ 1 psi' : 'm³/h @ 1 bar';
   const controlQ: Quantity = valve.controlType === 'fcv' ? 'flow' : 'pressure';
   return (
@@ -189,6 +252,7 @@ export function ValveEditor({ valve, from, to, onChange }: { valve: ValveUI; fro
           <NumField label={valve.lossType} unit={unit} value={valve.lossValue} onChange={(v) => onChange({ ...valve, lossValue: v })} />
         )}
       </div>
+      <SizingHelper key={valve.uid + valve.lossType} valve={valve} onChange={onChange} designFlowLps={designFlowLps} density={density} />
       <div className="checks">
         <label><input type="checkbox" checked={valve.open} onChange={(e) => onChange({ ...valve, open: e.target.checked })} /> Open</label>
         {valve.controlType === 'none' && (
@@ -245,7 +309,69 @@ function Points<T>({ title, cols, qty, rows, get, make, onChange }: PointsProps<
   );
 }
 
-export function PumpEditor({ pump, from, to, onChange, headFitRmse, curves, onAssignCurve, onSaveCurve, onManageCurves }: { pump: PumpUI; from: string; to: string; onChange: (p: PumpUI) => void; headFitRmse?: number; curves: PumpCurveEntry[]; onAssignCurve: (curveId: string) => void; onSaveCurve: () => void; onManageCurves: () => void }) {
+interface PumpEditorProps {
+  pump: PumpUI;
+  from: string;
+  to: string;
+  onChange: (p: PumpUI) => void;
+  headFitRmse?: number;
+  curves: PumpCurveEntry[];
+  onAssignCurve: (curveId: string) => void;
+  onSaveCurve: () => void;
+  onManageCurves: () => void;
+  /** Junctions and tanks, for choosing the node whose pressure a controlled pump holds. */
+  nodes: { uid: string; name: string }[];
+  /** Ask the user to click a node on the network; `apply` receives its uid. */
+  onPickNode: (apply: (uid: string) => void) => void;
+  pickActive: boolean;
+  /** Speed ratio the solver ended up with (differs from the typed one under speed control). */
+  solvedSpeed?: number;
+}
+
+/** Running / standby and variable-speed control of a pump. */
+function PumpControlSection({ pump, onChange, nodes, onPickNode, pickActive, solvedSpeed }: Pick<PumpEditorProps, 'pump' | 'onChange' | 'nodes' | 'onPickNode' | 'pickActive' | 'solvedSpeed'>) {
+  const c = pump.control;
+  const set = (control: PumpControl | undefined) => onChange({ ...pump, control });
+  return (
+    <div className="pump-ctl">
+      <label className="check"><input type="checkbox" checked={pump.running !== false} onChange={(e) => onChange({ ...pump, running: e.target.checked })} /> Running (untick to switch this pump off, e.g. standby)</label>
+      <label className="field">
+        <span>Speed</span>
+        <select value={c?.mode ?? 'fixed'} aria-label="Speed control" onChange={(e) => {
+          const m = e.target.value;
+          if (m === 'fixed') set(undefined);
+          else if (m === 'flow') set({ mode: 'flow', lps: 10, minRatio: c?.minRatio ?? 0.5, maxRatio: c?.maxRatio ?? 1 });
+          else set(c?.mode === 'pressure' ? c : { ...defaultControl(nodes.find((n) => n.name !== undefined)?.uid ?? ''), minRatio: c?.minRatio ?? 0.5, maxRatio: c?.maxRatio ?? 1 });
+        }}>
+          <option value="fixed">Fixed (set the speed ratio below)</option>
+          <option value="pressure">Variable: hold a pressure at a node</option>
+          <option value="flow">Variable: hold a flow through this pump</option>
+        </select>
+      </label>
+      {c?.mode === 'pressure' && (
+        <div className="field-pick">
+          <label className="field"><span>Node</span>
+            <select value={c.nodeUid} onChange={(e) => set({ ...c, nodeUid: e.target.value })}>
+              {nodes.map((n) => <option key={n.uid} value={n.uid}>{n.name}</option>)}
+            </select>
+          </label>
+          <button className={`pick-btn ${pickActive ? 'active' : ''}`} aria-pressed={pickActive} title="Choose the node by clicking it on the network" onClick={() => onPickNode((uid) => set({ ...c, nodeUid: uid }))}>◎ Pick</button>
+        </div>
+      )}
+      {c?.mode === 'pressure' && <NumField label="Pressure to hold (gauge)" q="pressure" value={c.kPaG} onChange={(v) => set({ ...c, kPaG: v })} />}
+      {c?.mode === 'flow' && <NumField label="Flow to hold" q="flow" value={c.lps} onChange={(v) => set({ ...c, lps: v })} />}
+      {c && (
+        <div className="grid">
+          <NumField label="Slowest" unit="× rated" value={c.minRatio} onChange={(v) => v > 0 && set({ ...c, minRatio: v })} title="Lowest speed ratio the drive may use" />
+          <NumField label="Fastest" unit="× rated" value={c.maxRatio} onChange={(v) => v > 0 && set({ ...c, maxRatio: v })} title="Highest speed ratio the drive may use" />
+        </div>
+      )}
+      {c && solvedSpeed !== undefined && pump.running !== false && <p className="hint">Speed found: <b>{(solvedSpeed * 100).toFixed(1)} %</b> of rated ({Math.round(solvedSpeed * pump.ratedRpm)} rpm).</p>}
+    </div>
+  );
+}
+
+export function PumpEditor({ pump, from, to, onChange, headFitRmse, curves, onAssignCurve, onSaveCurve, onManageCurves, nodes, onPickNode, pickActive, solvedSpeed }: PumpEditorProps) {
   const U = useUnits();
   const lib = curves.find((c) => c.id === pump.curveId);
   /** Editing the points by hand detaches the pump from its library curve. */
@@ -270,8 +396,13 @@ export function PumpEditor({ pump, from, to, onChange, headFitRmse, curves, onAs
         {curves.length === 0 && <p className="hint">No saved curves yet. “Add / edit curves…” lets you paste a datasheet table or generate one.</p>}
         {lib && <p className="hint">Using “{lib.name}”. Edit it in the library and every pump using it updates.</p>}
       </div>
+      <PumpControlSection pump={pump} onChange={onChange} nodes={nodes} onPickNode={onPickNode} pickActive={pickActive} solvedSpeed={solvedSpeed} />
       <div className="grid">
-        <NumField label="Speed ratio N/N_rated" value={pump.speedRatio} onChange={(v) => onChange({ ...pump, speedRatio: v })} />
+        {pump.control ? (
+          <label className="field"><span>Speed ratio N/N_rated</span><input readOnly value={solvedSpeed !== undefined ? solvedSpeed.toFixed(3) : String(pump.speedRatio)} aria-label="Speed ratio (set by control)" title="Set by the speed control above" /></label>
+        ) : (
+          <NumField label="Speed ratio N/N_rated" value={pump.speedRatio} onChange={(v) => onChange({ ...pump, speedRatio: v })} />
+        )}
         <NumField label="Rated speed" unit="rpm" value={pump.ratedRpm} onChange={(v) => own({ ratedRpm: v })} />
         <NumField label="Impeller trim D/D_full" value={pump.impellerTrim ?? 1} onChange={(v) => v > 0 && v <= 1 && onChange({ ...pump, impellerTrim: v })} title="1 = full diameter; 0.9 = trimmed to 90 %" />
       </div>

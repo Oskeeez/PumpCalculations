@@ -277,7 +277,7 @@ export function App() {
         onCalibPoint={(p) => setCalib((c) => (c.length >= 2 ? [p] : [...c, p]))}
         fitKey={epoch}
         pick={pick ?? undefined}
-        onPick={(uid) => { const back = pick?.id.startsWith('speed') ? 'speed' : 'targets'; pick?.apply(uid); setPick(null); setLayout((l) => activatePanel(l, back)); }}
+        onPick={(uid) => { const back = pick?.id.startsWith('speed') ? 'speed' : pick?.id.startsWith('pumpctl') ? 'properties' : 'targets'; pick?.apply(uid); setPick(null); setLayout((l) => activatePanel(l, back)); }}
         onPickCancel={() => setPick(null)}
       />
     </div>
@@ -298,7 +298,16 @@ export function App() {
             )}
             {selNode && <NodeEditor node={selNode} onChange={edit.updateNode} />}
             {selEdge?.kind === 'pipe' && <PipeEditor pipe={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} canvasLengthM={pipeLengthM(project, selEdge)} onChange={edit.updateEdge} />}
-            {selEdge?.kind === 'valve' && <ValveEditor valve={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} onChange={edit.updateEdge} />}
+            {selEdge?.kind === 'valve' && (
+              <ValveEditor
+                valve={selEdge}
+                from={nodeName(selEdge.from)}
+                to={nodeName(selEdge.to)}
+                onChange={edit.updateEdge}
+                designFlowLps={Math.abs(computed.result?.valves.find((x) => x.id === selEdge.name)?.flowM3s ?? 0) * 1000}
+                density={computed.model?.fluid.density}
+              />
+            )}
             {selEdge?.kind === 'pump' && (
               <PumpEditor
                 pump={selEdge}
@@ -310,6 +319,10 @@ export function App() {
                 onAssignCurve={(cid) => lib.assignCurve(selEdge.uid, cid)}
                 onSaveCurve={() => lib.saveCurveFromPump(selEdge)}
                 onManageCurves={() => { lib.setCurveFocus(selEdge.curveId); showPanel('pumpcurves'); }}
+                nodes={project.nodes.map((n) => ({ uid: n.uid, name: n.name }))}
+                onPickNode={(apply) => startPick(`pumpctl:${selEdge.uid}`, 'node', `${selEdge.name} control node`, apply)}
+                pickActive={pick?.id === `pumpctl:${selEdge.uid}`}
+                solvedSpeed={computed.result?.pumps.find((x) => x.id === selEdge.name)?.speedRatio}
               />
             )}
           </div>
