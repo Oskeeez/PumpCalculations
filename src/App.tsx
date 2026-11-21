@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { loadCriteria, type DesignCriteria } from './ai/criteria';
 import { mergeDraft } from './ai/drafts';
 import { loadAiSettings, type AiSettings } from './ai/llm';
@@ -9,9 +9,9 @@ import { Canvas, type ConnectKind, type Selection, type Tool } from './component
 import { AiPanel } from './components/AiPanel';
 import { CanvasPanel } from './components/CanvasPanel';
 import { DraftsView } from './components/DraftsView';
-import { ErrorBoundary } from './components/ErrorBoundary';
 import { NodeEditor, PipeEditor, PumpEditor, ValveEditor } from './components/Editors';
 import { NumField } from './components/NumField';
+import { PumpCurvesPanel } from './components/PumpCurvesPanel';
 import { Results } from './components/Results';
 import { ScenarioPanel } from './components/ScenarioPanel';
 import { TargetsPanel } from './components/TargetsPanel';
@@ -19,6 +19,9 @@ import { SpeedPanel, type SpeedConfig } from './components/SpeedPanel';
 import { EXPORT_THEME, SCREEN_THEME, SI_AXES, pumpChartSvg, svgToPngBase64, CHART_H, CHART_W } from './curveChart';
 import { calibrate } from './geometry';
 import { layerFromFile } from './images';
+import { LayoutMenu, PanelsMenu, Workspace } from './layout/Workspace';
+import { activatePanel, loadLayout, openPanel, saveLayout, type LayoutNode, type PanelId } from './layout/layout';
+import { applyCurve, checkCurve, curveFromPump } from './pumpCurves';
 import { useHistory } from './history';
 import {
   blankProject,
@@ -41,6 +44,8 @@ import {
   type ImageLayer,
   type NodeKind,
   type NodeUI,
+  type PumpCurveEntry,
+  type PumpUI,
   type PipeUI,
   type ProjectUI,
 } from './model';
@@ -48,6 +53,7 @@ import { FLUID_LIBRARY, fluidInfo } from './solver';
 import { UnitsContext, makeUnits, unitFactor, type UnitSystem } from './units';
 
 const View3D = lazy(() => import('./components/View3D'));
+const Coords3D = lazy(() => import('./components/View3D').then((m) => ({ default: m.Coords3D })));
 
 const TOOLS: { id: Exclude<Tool, 'select' | 'scale'>; label: string; title: string }[] = [
   { id: 'tank', label: '▭ Tank', title: 'Place a tank' },
@@ -71,19 +77,6 @@ function loadInitial(): ProjectUI {
   return defaultProject();
 }
 
-const SIDE_KEY = 'pipe-network-side-width';
-const SIDE_MIN = 260;
-const SIDE_MAX = 760;
-function loadSideWidth(): number {
-  try {
-    const n = Number(localStorage.getItem(SIDE_KEY));
-    if (Number.isFinite(n) && n >= SIDE_MIN && n <= SIDE_MAX) return n;
-  } catch {
-    /* ignore */
-  }
-  return 340;
-}
-
 function loadUnits(): UnitSystem {
   try {
     return localStorage.getItem(UNITS_KEY) === 'us' ? 'us' : 'si';
@@ -101,13 +94,12 @@ export function App() {
   const [criteria, setCriteria] = useState<DesignCriteria>(loadCriteria);
   const [draftTab, setDraftTab] = useState('compare');
   const [unitSystem, setUnitSystem] = useState<UnitSystem>(loadUnits);
-  const [view, setView] = useState<'network' | '3d' | 'ai' | 'drafts'>('network');
+  const [layout, setLayout] = useState<LayoutNode>(loadLayout);
   const [selection, setSelection] = useState<Selection>(null);
   const [tool, setTool] = useState<Tool>('select');
   const [pending, setPending] = useState<string>();
   const [adjustImageId, setAdjustImageId] = useState<string>();
   const [adjustPick, setAdjustPick] = useState('');
-  const [sideW, setSideW] = useState(loadSideWidth);
   const [calib, setCalib] = useState<{ x: number; y: number }[]>([]);
   const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string }>();
   const [speedCfg, setSpeedCfg] = useState<SpeedConfig>({ pumpUid: '', minPct: 60, maxPct: 100, stepPct: 10 });
@@ -257,24 +249,6 @@ export function App() {
         return { ...im, width, height: im.height * k, x: Math.round(cx - (cx - im.x) * k), y: Math.round(cy - (cy - im.y) * k) };
       }),
     }), `imgzoom:${id}`);
-  const startSideDrag = (ev: React.PointerEvent) => {
-    ev.preventDefault();
-    const startX = ev.clientX;
-    const startW = sideW;
-    const move = (e: PointerEvent) => setSideW(Math.max(SIDE_MIN, Math.min(SIDE_MAX, startW + (startX - e.clientX))));
-    const up = (e: PointerEvent) => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      const w = Math.max(SIDE_MIN, Math.min(SIDE_MAX, startW + (startX - e.clientX)));
-      try {
-        localStorage.setItem(SIDE_KEY, String(w));
-      } catch {
-        /* ignore */
-      }
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  };
   const moveNode = (uid: string, x: number, y: number) => setProject((p) => ({ ...p, nodes: p.nodes.map((n) => (n.uid === uid ? { ...n, x, y } : n)) }), `drag:${uid}`);
   const updateNode = (n: NodeUI) => setProject((p) => ({ ...p, nodes: p.nodes.map((q) => (q.uid === n.uid ? n : q)) }), `node:${n.uid}`);
   const updateEdge = (e: EdgeUI) => setProject((p) => ({ ...p, edges: p.edges.map((q) => (q.uid === e.uid ? e : q)) }), `edge:${e.uid}`);
@@ -320,7 +294,7 @@ export function App() {
     const s = scenarios.find((x) => x.id === id);
     if (!s) return;
     const snap = JSON.parse(JSON.stringify(s.project)) as Omit<ProjectUI, 'images' | 'scenarios'>;
-    replaceProject({ ...snap, images: project.images, scenarios: project.scenarios, targets: project.targets, assumptions: project.assumptions, drafts }, `Loaded “${s.name}”.`);
+    replaceProject({ ...snap, images: project.images, scenarios: project.scenarios, targets: project.targets, assumptions: project.assumptions, pumpCurves: project.pumpCurves, drafts }, `Loaded “${s.name}”.`);
   };
   // AI drafts: accept (merge into main), discard
   const acceptDraft = (id: string, keys: Set<string> | 'all'): string[] => {
@@ -398,6 +372,50 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   });
 
+  // pump curve library
+  const curves = project.pumpCurves ?? [];
+  const [curveFocus, setCurveFocus] = useState<string>();
+  const updateCurves = (next: PumpCurveEntry[], changedId?: string) =>
+    setProject((p) => {
+      const changed = changedId ? next.find((c) => c.id === changedId) : undefined;
+      let edges = p.edges;
+      if (changed && checkCurve(changed).errors.length === 0) {
+        // pumps that use this curve follow its edits (they keep their speed and trim)
+        edges = edges.map((e) => (e.kind === 'pump' && e.curveId === changed.id ? { ...applyCurve(e, changed), impellerTrim: e.impellerTrim } : e));
+      } else if (changedId && !changed) {
+        edges = edges.map((e) => (e.kind === 'pump' && e.curveId === changedId ? { ...e, curveId: undefined } : e)); // curve deleted: pumps keep their points
+      }
+      return { ...p, pumpCurves: next, edges };
+    }, changedId ? `curve:${changedId}` : undefined);
+  const assignCurve = (pumpUid: string, curveId: string) => {
+    if (!curveId) {
+      setProject((p) => ({ ...p, edges: p.edges.map((e) => (e.uid === pumpUid && e.kind === 'pump' ? { ...e, curveId: undefined } : e)) }));
+      return;
+    }
+    const c = curves.find((x) => x.id === curveId);
+    if (!c) return;
+    const bad = checkCurve(c).errors[0];
+    if (bad) return setMessage({ kind: 'error', text: `“${c.name}” cannot be used yet: ${bad}` });
+    setProject((p) => ({ ...p, edges: p.edges.map((e) => (e.uid === pumpUid && e.kind === 'pump' ? applyCurve(e, c) : e)) }));
+    setCurveFocus(c.id);
+  };
+  const saveCurveFromPump = (pump: PumpUI) => {
+    const c = curveFromPump(pump, `${pump.name} curve`);
+    setProject((p) => ({ ...p, pumpCurves: [...(p.pumpCurves ?? []), c], edges: p.edges.map((e) => (e.uid === pump.uid && e.kind === 'pump' ? { ...e, curveId: c.id } : e)) }));
+    setCurveFocus(c.id);
+    setMessage({ kind: 'info', text: `Saved “${c.name}” to the pump curve library.` });
+  };
+  const showPanel = (id: PanelId) => setLayout((l) => openPanel(l, id));
+
+  useEffect(() => {
+    const t = setTimeout(() => saveLayout(layout), 300);
+    return () => clearTimeout(t);
+  }, [layout]);
+  // selecting something brings the Properties tab forward (if it is open)
+  useEffect(() => {
+    if (selection) setLayout((l) => activatePanel(l, 'properties'));
+  }, [selection]);
+
   const selectByName = (name: string) => {
     const n = project.nodes.find((q) => q.name === name);
     if (n) return setSelection({ type: 'node', uid: n.uid });
@@ -442,29 +460,195 @@ export function App() {
   const isCustom = project.fluid.id === 'custom';
   const hasSide = !!(selNode || selEdge);
 
+  const failing = targetStatuses.filter((x) => !x.pass).length;
+  const badge = (id: PanelId): string | undefined =>
+    id === 'targets' ? (targets.length ? `(${targets.length}${failing ? `, ${failing} failing` : ''})` : undefined)
+    : id === 'drafts' ? `(${drafts.filter((d) => d.status !== 'discarded').length})`
+    : id === 'pumpcurves' ? (curves.length ? `(${curves.length})` : undefined)
+    : undefined;
+
+  const networkPanel = (
+    <div className="net-panel">
+      <div className="toolbar" role="toolbar" aria-label="Network tools">
+        <button className={tool === 'select' ? 'active' : ''} aria-pressed={tool === 'select'} title="Select and move (Esc)" onClick={() => toSelect('select')}>↖ Select</button>
+        {TOOLS.map((t) => (
+          <button key={t.id} className={tool === t.id ? 'active' : ''} title={t.title} aria-pressed={tool === t.id} onClick={() => pickTool(t.id)}>{t.label}</button>
+        ))}
+        <button onClick={deleteSelected} disabled={!selection}>Delete</button>
+        <span className="sep" />
+        {project.images.length === 0 ? (
+          <button onClick={() => imageInput.current?.click()} title="Add a drawing or photo under the network">🖼 Add image…</button>
+        ) : (
+          <>
+            {project.images.length > 1 && (
+              <select value={adjustTarget?.id ?? ''} onChange={(e) => setAdjustPick(e.target.value)} aria-label="Image to adjust" disabled={!!adjustImageId}>
+                {project.images.map((im) => <option key={im.id} value={im.id}>{im.name}</option>)}
+              </select>
+            )}
+            <button className={adjustImageId ? 'active' : ''} aria-pressed={!!adjustImageId} onClick={toggleAdjust} title="Move and zoom the image. Otherwise images cannot be moved or selected.">{adjustImageId ? '✓ Done adjusting' : '🖼 Adjust image'}</button>
+            <button onClick={() => imageInput.current?.click()} title="Add another image">+ Image</button>
+          </>
+        )}
+        <input ref={imageInput} type="file" accept="image/*" hidden onChange={(e) => { void addImageFile(e.target.files?.[0]); e.target.value = ''; }} />
+      </div>
+      <Canvas
+        project={project}
+        result={computed.result}
+        selection={selection}
+        tool={tool}
+        pending={pending}
+        calib={calib}
+        onSelect={setSelection}
+        onTool={toSelect}
+        onAddNode={addNode}
+        onMoveNode={moveNode}
+        onMoveImage={(id, x, y) => updateImage(id, { x, y })}
+        onConnect={connect}
+        onInsert={insertInto}
+        onPlace={placeAlone}
+        onConnectNew={connectNew}
+        onConnectBlank={connectBlankDrag}
+        onReverse={reverseEdge}
+        adjustImageId={adjustImageId}
+        onZoomImage={zoomImage}
+        onAdjustDone={() => setAdjustImageId(undefined)}
+        onPending={setPending}
+        onCalibPoint={(p) => setCalib((c) => (c.length >= 2 ? [p] : [...c, p]))}
+      />
+    </div>
+  );
+
+  const renderPanel = (id: PanelId): ReactNode => {
+    switch (id) {
+      case 'network':
+        return networkPanel;
+      case 'properties':
+        return (
+          <div className="side">
+            {!hasSide && (
+              <section className="editor empty-side">
+                <h3>Properties</h3>
+                <p className="hint">Nothing selected. Click a node, pipe, valve or pump on the network to edit it here.</p>
+              </section>
+            )}
+            {selNode && <NodeEditor node={selNode} onChange={updateNode} />}
+            {selEdge?.kind === 'pipe' && <PipeEditor pipe={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} canvasLengthM={pipeLengthM(project, selEdge)} onChange={updateEdge} />}
+            {selEdge?.kind === 'valve' && <ValveEditor valve={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} onChange={updateEdge} />}
+            {selEdge?.kind === 'pump' && (
+              <PumpEditor
+                pump={selEdge}
+                from={nodeName(selEdge.from)}
+                to={nodeName(selEdge.to)}
+                onChange={updateEdge}
+                headFitRmse={pumpFit}
+                curves={curves}
+                onAssignCurve={(cid) => assignCurve(selEdge.uid, cid)}
+                onSaveCurve={() => saveCurveFromPump(selEdge)}
+                onManageCurves={() => { setCurveFocus(selEdge.curveId); showPanel('pumpcurves'); }}
+              />
+            )}
+          </div>
+        );
+      case 'pumpcurves':
+        return <PumpCurvesPanel curves={curves} pumps={pumpEdges} selectedPump={selEdge?.kind === 'pump' ? selEdge : undefined} focusId={curveFocus} onChange={updateCurves} onUse={assignCurve} />;
+      case 'results':
+        return <Results computed={computed} onSelectName={selectByName} />;
+      case 'pumpchart':
+        return chart ? <div className="chart" style={{ aspectRatio: `${CHART_W} / ${CHART_H}` }} dangerouslySetInnerHTML={{ __html: chart.screen }} /> : <p className="hint">Add a pump to see its curve and operating point.</p>;
+      case 'targets':
+        return (
+          <>
+            <TargetsPanel project={project} targets={targets} statuses={targetStatuses} onChange={(t) => setProject((p) => ({ ...p, targets: t }), 'targets')} />
+            {(project.assumptions ?? []).length > 0 && (
+              <>
+                <h4>Assumptions from AI-built parts ({project.assumptions!.length})</h4>
+                <ul className="status-list">{project.assumptions!.map((a) => <li key={a.id}><b>{a.category}:</b> {a.text}</li>)}</ul>
+              </>
+            )}
+          </>
+        );
+      case 'scale':
+        return (
+          <CanvasPanel
+            scaleMPerPx={project.scaleMPerPx}
+            canvasW={project.canvasW}
+            canvasH={project.canvasH}
+            images={project.images}
+            calib={calib}
+            calibActive={tool === 'scale'}
+            onScale={(s) => setProject((p) => ({ ...p, scaleMPerPx: s }), 'scale')}
+            onCanvasSize={(w, h) => setProject((p) => ({ ...p, canvasW: w, canvasH: h }), 'canvas')}
+            onAddImage={addImage}
+            onUpdateImage={updateImage}
+            adjustImageId={adjustImageId}
+            onAdjust={setAdjustImageId}
+            onZoom={(iid, f) => { const im = project.images.find((q) => q.id === iid); if (im) zoomImage(iid, f, im.x + im.width / 2, im.y + im.height / 2); }}
+            onDeleteImage={deleteImage}
+            onStartCalib={() => { setCalib([]); setPending(undefined); setTool('scale'); }}
+            onApplyCalib={applyCalib}
+            onCancelCalib={() => { setCalib([]); setTool('select'); }}
+          />
+        );
+      case 'speed':
+        return <SpeedPanel pumps={pumpEdges} config={{ ...speedCfg, pumpUid: speedPumpUid }} onConfig={setSpeedCfg} sweep={sweep} />;
+      case 'scenarios':
+        return <ScenarioPanel scenarios={scenarios} comparison={comparison} onSave={saveScenario} onLoad={loadScenario} onDelete={deleteScenario} onRename={renameScenario} />;
+      case 'view3d':
+        return (
+          <Suspense fallback={<p className="hint">Loading 3D view…</p>}>
+            <View3D project={project} computed={computed} />
+          </Suspense>
+        );
+      case 'coords3d':
+        return (
+          <Suspense fallback={<p className="hint">Loading…</p>}>
+            <Coords3D project={project} computed={computed} />
+          </Suspense>
+        );
+      case 'ai':
+        return (
+          <AiPanel
+            main={project}
+            drafts={drafts}
+            activeDraftId={draftTab === 'compare' ? undefined : draftTab}
+            settings={aiSettings}
+            onSettings={setAiSettings}
+            criteria={criteria}
+            onCriteria={setCriteria}
+            onDrafts={setDrafts}
+            onShow={(ids) => { setDraftTab(ids.length === 1 ? ids[0] : 'compare'); showPanel('drafts'); }}
+          />
+        );
+      case 'drafts':
+        return <DraftsView main={project} drafts={drafts} criteria={criteria} tab={draftTab} onTab={setDraftTab} onAccept={acceptDraft} onDiscard={discardDraft} />;
+    }
+  };
+
   return (
     <UnitsContext.Provider value={unitSystem}>
       <div className="app">
-        <header>
+        <header className="topbar">
           <h1>Pipe Network Calculator</h1>
-          <button className="primary" disabled={!canExport} onClick={exportXlsx} title="Excel sheets are always in SI units">Export Excel</button>
+          <div className="menu" role="toolbar" aria-label="Project">
+            <button onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">↶ Undo</button>
+            <button onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
+            <span className="sep" />
+            <button onClick={() => replaceProject(blankProject())}>New</button>
+            <button onClick={() => replaceProject(defaultProject())}>Example</button>
+            <button onClick={() => fileInput.current?.click()}>Open…</button>
+            <button onClick={saveFile}>Save…</button>
+            <input ref={fileInput} type="file" accept=".json,application/json" hidden onChange={openFile} />
+            <span className="sep" />
+            <span className="seg" role="group" aria-label="Unit system">
+              <button className={unitSystem === 'si' ? 'active' : ''} aria-pressed={unitSystem === 'si'} onClick={() => setUnitSystem('si')}>SI</button>
+              <button className={unitSystem === 'us' ? 'active' : ''} aria-pressed={unitSystem === 'us'} onClick={() => setUnitSystem('us')}>US</button>
+            </span>
+            <span className="sep" />
+            <LayoutMenu onLayout={setLayout} />
+            <PanelsMenu layout={layout} onLayout={setLayout} />
+          </div>
+          <button className="primary export" disabled={!canExport} onClick={exportXlsx} title="Excel sheets are always in SI units">Export Excel</button>
         </header>
-
-        <div className="menu" role="toolbar" aria-label="Project">
-          <button onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">↶ Undo</button>
-          <button onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
-          <span className="sep" />
-          <button onClick={() => replaceProject(blankProject())}>New</button>
-          <button onClick={() => replaceProject(defaultProject())}>Example</button>
-          <button onClick={() => fileInput.current?.click()}>Open…</button>
-          <button onClick={saveFile}>Save…</button>
-          <input ref={fileInput} type="file" accept=".json,application/json" hidden onChange={openFile} />
-          <span className="sep" />
-          <span className="seg" role="group" aria-label="Unit system">
-            <button className={unitSystem === 'si' ? 'active' : ''} aria-pressed={unitSystem === 'si'} onClick={() => setUnitSystem('si')}>SI</button>
-            <button className={unitSystem === 'us' ? 'active' : ''} aria-pressed={unitSystem === 'us'} onClick={() => setUnitSystem('us')}>US</button>
-          </span>
-        </div>
 
         <div className="header-fluid fluidbar">
           <label className="field wide">
@@ -494,156 +678,14 @@ export function App() {
             </span>
           )}
         </div>
-        {message && <div className={`banner ${message.kind === 'error' ? 'error' : 'ok'}`}>{message.text}</div>}
 
-        <nav className="tabs" aria-label="Page">
-          <button className={view === 'network' ? 'active' : ''} onClick={() => setView('network')}>Network</button>
-          <button className={view === '3d' ? 'active' : ''} onClick={() => setView('3d')}>3D view</button>
-          <button className={view === 'ai' ? 'active' : ''} onClick={() => setView('ai')}>AI assistant</button>
-          <button className={view === 'drafts' ? 'active' : ''} onClick={() => setView('drafts')}>Drafts ({drafts.filter((d) => d.status !== 'discarded').length})</button>
-        </nav>
+        <Workspace layout={layout} onLayout={setLayout} render={renderPanel} badge={badge} />
 
-        {view === 'ai' ? (
-          <ErrorBoundary title="The AI assistant failed">
-            <AiPanel
-              main={project}
-              drafts={drafts}
-              activeDraftId={draftTab === 'compare' ? undefined : draftTab}
-              settings={aiSettings}
-              onSettings={setAiSettings}
-              criteria={criteria}
-              onCriteria={setCriteria}
-              onDrafts={setDrafts}
-              onShow={(ids) => { setDraftTab(ids.length === 1 ? ids[0] : 'compare'); setView('drafts'); }}
-            />
-          </ErrorBoundary>
-        ) : view === 'drafts' ? (
-          <ErrorBoundary title="The drafts view failed">
-            <DraftsView main={project} drafts={drafts} criteria={criteria} tab={draftTab} onTab={setDraftTab} onAccept={acceptDraft} onDiscard={discardDraft} />
-          </ErrorBoundary>
-        ) : view === '3d' ? (
-          <ErrorBoundary title="The 3D view failed">
-            <Suspense fallback={<p className="hint">Loading 3D view…</p>}>
-              <View3D project={project} computed={computed} />
-            </Suspense>
-          </ErrorBoundary>
-        ) : (
-          <>
-            <div className="toolbar" role="toolbar" aria-label="Network tools">
-              <button className={tool === 'select' ? 'active' : ''} aria-pressed={tool === 'select'} title="Select and move (Esc)" onClick={() => toSelect('select')}>↖ Select</button>
-              {TOOLS.map((t) => (
-                <button key={t.id} className={tool === t.id ? 'active' : ''} title={t.title} aria-pressed={tool === t.id} onClick={() => pickTool(t.id)}>{t.label}</button>
-              ))}
-              <button onClick={deleteSelected} disabled={!selection}>Delete</button>
-              <span className="sep" />
-              {project.images.length === 0 ? (
-                <button onClick={() => imageInput.current?.click()} title="Add a drawing or photo under the network">🖼 Add image…</button>
-              ) : (
-                <>
-                  {project.images.length > 1 && (
-                    <select value={adjustTarget?.id ?? ''} onChange={(e) => setAdjustPick(e.target.value)} aria-label="Image to adjust" disabled={!!adjustImageId}>
-                      {project.images.map((im) => <option key={im.id} value={im.id}>{im.name}</option>)}
-                    </select>
-                  )}
-                  <button className={adjustImageId ? 'active' : ''} aria-pressed={!!adjustImageId} onClick={toggleAdjust} title="Move and zoom the image. Otherwise images cannot be moved or selected.">{adjustImageId ? '✓ Done adjusting' : '🖼 Adjust image'}</button>
-                  <button onClick={() => imageInput.current?.click()} title="Add another image">+ Image</button>
-                </>
-              )}
-              <input ref={imageInput} type="file" accept="image/*" hidden onChange={(e) => { void addImageFile(e.target.files?.[0]); e.target.value = ''; }} />
-            </div>
-
-            <div className="workspace" style={{ '--side-w': `${sideW}px` } as React.CSSProperties}>
-              <Canvas
-                project={project}
-                result={computed.result}
-                selection={selection}
-                tool={tool}
-                pending={pending}
-                calib={calib}
-                onSelect={setSelection}
-                onTool={toSelect}
-                onAddNode={addNode}
-                onMoveNode={moveNode}
-                onMoveImage={(id, x, y) => updateImage(id, { x, y })}
-                onConnect={connect}
-                onInsert={insertInto}
-                onPlace={placeAlone}
-                onConnectNew={connectNew}
-                onConnectBlank={connectBlankDrag}
-                onReverse={reverseEdge}
-                adjustImageId={adjustImageId}
-                onZoomImage={zoomImage}
-                onAdjustDone={() => setAdjustImageId(undefined)}
-                onPending={setPending}
-                onCalibPoint={(p) => setCalib((c) => (c.length >= 2 ? [p] : [...c, p]))}
-              />
-              <div className="side-handle" role="separator" aria-orientation="vertical" aria-label="Drag to resize the side panel" title="Drag to resize" onPointerDown={startSideDrag} onDoubleClick={() => { setSideW(340); try { localStorage.setItem(SIDE_KEY, '340'); } catch { /* ignore */ } }} />
-              {(
-                <aside className="side">
-                  {!hasSide && (
-                    <section className="editor empty-side">
-                      <h3>Properties</h3>
-                      <p className="hint">Nothing selected. Click a node, pipe, valve or pump to edit it here.</p>
-                      <p className="hint">Drag the bar on the left edge of this panel to resize it (double-click to reset).</p>
-                    </section>
-                  )}
-                  {selNode && <NodeEditor node={selNode} onChange={updateNode} />}
-                  {selEdge?.kind === 'pipe' && <PipeEditor pipe={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} canvasLengthM={pipeLengthM(project, selEdge)} onChange={updateEdge} />}
-                  {selEdge?.kind === 'valve' && <ValveEditor valve={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} onChange={updateEdge} />}
-                  {selEdge?.kind === 'pump' && <PumpEditor pump={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} onChange={updateEdge} headFitRmse={pumpFit} />}
-                </aside>
-              )}
-            </div>
-
-            <details className="panel" open={targets.length > 0}>
-              <summary>Targets ({targets.length}{targets.length ? `, ${targetStatuses.filter((s) => !s.pass).length} failing` : ''})</summary>
-              <TargetsPanel project={project} targets={targets} statuses={targetStatuses} onChange={(t) => setProject((p) => ({ ...p, targets: t }), 'targets')} />
-              {(project.assumptions ?? []).length > 0 && (
-                <>
-                  <h4>Assumptions from AI-built parts ({project.assumptions!.length})</h4>
-                  <ul className="status-list">{project.assumptions!.map((a) => <li key={a.id}><b>{a.category}:</b> {a.text}</li>)}</ul>
-                </>
-              )}
-            </details>
-
-            <details className="panel">
-              <summary>Scale and images</summary>
-              <CanvasPanel
-                scaleMPerPx={project.scaleMPerPx}
-                canvasW={project.canvasW}
-                canvasH={project.canvasH}
-                images={project.images}
-                calib={calib}
-                calibActive={tool === 'scale'}
-                onScale={(s) => setProject((p) => ({ ...p, scaleMPerPx: s }), 'scale')}
-                onCanvasSize={(w, h) => setProject((p) => ({ ...p, canvasW: w, canvasH: h }), 'canvas')}
-                onAddImage={addImage}
-                onUpdateImage={updateImage}
-                adjustImageId={adjustImageId}
-                onAdjust={setAdjustImageId}
-                onZoom={(id, f) => { const im = project.images.find((q) => q.id === id); if (im) zoomImage(id, f, im.x + im.width / 2, im.y + im.height / 2); }}
-                onDeleteImage={deleteImage}
-                onStartCalib={() => { setCalib([]); setPending(undefined); setTool('scale'); }}
-                onApplyCalib={applyCalib}
-                onCancelCalib={() => { setCalib([]); setTool('select'); }}
-              />
-            </details>
-
-            <div className="below">
-              <Results computed={computed} onSelectName={selectByName} />
-              {chart && <div className="chart" style={{ aspectRatio: `${CHART_W} / ${CHART_H}` }} dangerouslySetInnerHTML={{ __html: chart.screen }} />}
-            </div>
-
-            <details className="panel">
-              <summary>Pump speed analysis</summary>
-              <SpeedPanel pumps={pumpEdges} config={{ ...speedCfg, pumpUid: speedPumpUid }} onConfig={setSpeedCfg} sweep={sweep} />
-            </details>
-
-            <details className="panel" open={scenarios.length > 0}>
-              <summary>Scenarios ({scenarios.length})</summary>
-              <ScenarioPanel scenarios={scenarios} comparison={comparison} onSave={saveScenario} onLoad={loadScenario} onDelete={deleteScenario} onRename={renameScenario} />
-            </details>
-          </>
+        {message && (
+          <div className={`toast ${message.kind === 'error' ? 'error' : 'ok'}`} role="status">
+            <span>{message.text}</span>
+            <button aria-label="Dismiss" onClick={() => setMessage(undefined)}>×</button>
+          </div>
         )}
       </div>
     </UnitsContext.Provider>

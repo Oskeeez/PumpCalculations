@@ -15,10 +15,12 @@ export function genericPumpCurves(bepFlowLps: number, bepHeadM: number, peakEtaP
   const eta = peakEtaPct ?? Math.max(45, Math.min(85, 55 + 10 * Math.log10(Math.max(q, 0.1))));
   const n0 = Math.max(1, 0.12 * h);
   const r = (v: number) => Math.round(v * 1000) / 1000;
+  // all three curves share the same flow points, so they read as one tidy table
+  const xs = [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5];
   return {
-    head: [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5].map((x) => ({ q: r(q * x), h: r(1.25 * h * (1 - 0.2 * x * x)) })),
-    efficiency: [0.3, 0.5, 0.7, 0.85, 1, 1.15, 1.3, 1.5].map((x) => ({ q: r(q * x), eta: r(eta * (2 * x - x * x)) })),
-    npshr: [0.25, 0.5, 0.75, 1, 1.25, 1.5].map((x) => ({ q: r(q * x), h: r(n0 * (0.7 + 0.3 * x * x)) })),
+    head: xs.map((x) => ({ q: r(q * x), h: r(1.25 * h * (1 - 0.2 * x * x)) })),
+    efficiency: xs.filter((x) => x > 0).map((x) => ({ q: r(q * x), eta: r(eta * (2 * x - x * x)) })),
+    npshr: xs.map((x) => ({ q: r(q * x), h: r(n0 * (0.7 + 0.3 * x * x)) })),
   };
 }
 

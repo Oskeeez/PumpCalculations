@@ -77,6 +77,19 @@ export interface PumpUI {
   npshr: { q: number; h: number }[];
   /** Impeller trim, D/D_full (1 = full diameter). Scales the curves by the affinity laws: Q ∝ D, H ∝ D². */
   impellerTrim?: number;
+  /** Library curve this pump's data was taken from (its points are copied into head/efficiency/npshr). Cleared when edited by hand. */
+  curveId?: string;
+}
+
+/** A named, reusable pump curve (flow L/s, head m, efficiency %, NPSHr m). */
+export interface PumpCurveEntry {
+  id: string;
+  name: string;
+  ratedRpm: number;
+  head: { q: number; h: number }[];
+  efficiency: { q: number; eta: number }[];
+  npshr: { q: number; h: number }[];
+  note?: string;
 }
 
 /** 'orifice': lossValue is the bore diameter [mm]; K is derived from the bore/diameter ratio and orificeCd. */
@@ -137,6 +150,8 @@ export interface ProjectUI {
   assumptions?: Assumption[];
   /** AI drafts. Held outside the undo history by the app, but saved in the project file. */
   drafts?: Draft[];
+  /** Library of reusable pump curves. */
+  pumpCurves?: PumpCurveEntry[];
 }
 
 export interface ImageLayer {
@@ -155,7 +170,7 @@ export interface ImageLayer {
 }
 
 /** Everything the hydraulic calculation needs (no images, no saved scenarios). */
-export type HydraulicProject = Omit<ProjectUI, 'scenarios' | 'images' | 'targets' | 'assumptions' | 'drafts'>;
+export type HydraulicProject = Omit<ProjectUI, 'scenarios' | 'images' | 'targets' | 'assumptions' | 'drafts' | 'pumpCurves'>;
 
 /** A named snapshot of the hydraulic model (images are not part of a snapshot). */
 export interface Scenario {
@@ -169,7 +184,7 @@ export const newUid = (): string => `u${++counter}`;
 
 /** Make sure newly created uids cannot collide with those of a loaded project. */
 export function syncUidCounter(p: ProjectUI): void {
-  const ids: string[] = [...p.nodes.map((n) => n.uid), ...p.edges.map((e) => e.uid), ...(p.targets ?? []).map((t) => t.id), ...(p.assumptions ?? []).map((a) => a.id)];
+  const ids: string[] = [...p.nodes.map((n) => n.uid), ...p.edges.map((e) => e.uid), ...(p.targets ?? []).map((t) => t.id), ...(p.assumptions ?? []).map((a) => a.id), ...(p.pumpCurves ?? []).map((c) => c.id)];
   for (const d of p.drafts ?? []) {
     ids.push(d.id, d.runId, ...d.project.nodes.map((n) => n.uid), ...d.project.edges.map((e) => e.uid), ...d.base.project.nodes.map((n) => n.uid), ...d.base.project.edges.map((e) => e.uid), ...d.targets.map((t) => t.id), ...d.assumptions.map((a) => a.id));
   }
@@ -601,10 +616,15 @@ function normalizeProject(p: Partial<ProjectUI> | undefined, depth = 0): Project
     if (!Array.isArray(p.assumptions) || p.assumptions.some((a) => !a || !isStr(a.id) || !isStr(a.text))) throw new Error('An assumption in the project file is malformed.');
     project.assumptions = p.assumptions;
   }
+  if (p.pumpCurves !== undefined) {
+    const ok = (a: unknown, k1: string, k2: string) => Array.isArray(a) && a.every((r) => r && isNum((r as Record<string, unknown>)[k1]) && isNum((r as Record<string, unknown>)[k2]));
+    if (!Array.isArray(p.pumpCurves) || p.pumpCurves.some((c) => !c || !isStr(c.id) || !isStr(c.name) || !ok(c.head, 'q', 'h') || !ok(c.efficiency, 'q', 'eta') || !ok(c.npshr, 'q', 'h'))) throw new Error('A pump curve in the project file is malformed.');
+    project.pumpCurves = p.pumpCurves.map((c) => ({ ...c, ratedRpm: isNum(c.ratedRpm) ? c.ratedRpm : 1450 }));
+  }
   if (depth === 0 && p.drafts !== undefined) {
     if (!Array.isArray(p.drafts)) throw new Error('The drafts in the project file are malformed.');
     const hyd = (x: unknown): HydraulicProject => {
-      const { scenarios: _s, images: _i, targets: _t, assumptions: _a, drafts: _d, ...rest } = normalizeProject(x as Partial<ProjectUI>, 1);
+      const { scenarios: _s, images: _i, targets: _t, assumptions: _a, drafts: _d, pumpCurves: _c, ...rest } = normalizeProject(x as Partial<ProjectUI>, 1);
       return rest;
     };
     project.drafts = p.drafts.map((d) => {

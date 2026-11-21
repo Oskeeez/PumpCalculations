@@ -381,7 +381,17 @@ export default function View3D({ project, computed }: Props) {
       <div className="v3-stage" ref={mount} />
       {failed && <div className="banner error">{failed}</div>}
 
-      <div className="below">
+    </div>
+  );
+}
+
+/** Coordinate tables for every node and element (X east, Y north, Z up). */
+export function Coords3D({ project, computed }: Props) {
+  const U = useUnits();
+  const sc = useMemo(() => buildScene(project, computed.result), [project, computed.result]);
+  return (
+    <div className="coords3d">
+      <div className="coords-tables">
         <div className="table-wrap">
           <h3>Nodes</h3>
           <table>

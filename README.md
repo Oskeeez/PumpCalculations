@@ -18,6 +18,10 @@ npm run build
 - Pump curves at several speeds (affinity laws), scenario comparison, SI and US units.
 - Save and open as JSON, autosave, undo and redo, Excel export.
 
+## Workspace and pump curves
+- The page never scrolls. Everything lives in resizable **tiles**: drag a tab by its title to another tile's edge to dock it beside, or to the middle to add it as a tab. Drag the bars between tiles to resize (double-click to even out). The **Panels** menu shows or hides each panel, **Layout** has ready-made arrangements, and your layout is remembered.
+- **Pump curves** panel: a library of reusable curves. Type points in a table, paste a table from a datasheet or Excel, open a CSV, or generate a generic curve from a best-efficiency point. Pick a curve for each pump in its Properties (or "Use for pump" in the library). Editing a curve updates every pump using it.
+
 ## AI design assistant
 Optional. Uses your own Anthropic API key (AI assistant tab → settings; stored in this browser only, sent only to api.anthropic.com). The solver stays the source of truth: the model can only call validated tools, edits go into **drafts** (copies), and every pass/fail is computed by the solver, never by the model.
 - **Targets** (Network tab): required flow, residual pressure window, velocity limits, pump range (% of BEP, runout), NPSH margin. Saved in the project file.

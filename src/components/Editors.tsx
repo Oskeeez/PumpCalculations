@@ -1,5 +1,5 @@
 import { FITTINGS, MATERIALS, SCH40, matchMaterial, matchSize } from '../library';
-import type { FittingUI, NodeUI, PipeUI, PumpUI, ValveControlType, ValveLossType, ValveUI } from '../model';
+import type { FittingUI, NodeUI, PipeUI, PumpCurveEntry, PumpUI, ValveControlType, ValveLossType, ValveUI } from '../model';
 import { useUnits, type Quantity } from '../units';
 import { NumField } from './NumField';
 
@@ -245,23 +245,45 @@ function Points<T>({ title, cols, qty, rows, get, make, onChange }: PointsProps<
   );
 }
 
-export function PumpEditor({ pump, from, to, onChange, headFitRmse }: { pump: PumpUI; from: string; to: string; onChange: (p: PumpUI) => void; headFitRmse?: number }) {
+export function PumpEditor({ pump, from, to, onChange, headFitRmse, curves, onAssignCurve, onSaveCurve, onManageCurves }: { pump: PumpUI; from: string; to: string; onChange: (p: PumpUI) => void; headFitRmse?: number; curves: PumpCurveEntry[]; onAssignCurve: (curveId: string) => void; onSaveCurve: () => void; onManageCurves: () => void }) {
   const U = useUnits();
+  const lib = curves.find((c) => c.id === pump.curveId);
+  /** Editing the points by hand detaches the pump from its library curve. */
+  const own = (patch: Partial<PumpUI>) => onChange({ ...pump, ...patch, curveId: undefined });
   return (
     <section className="editor">
       <h3>Pump</h3>
       <NameField value={pump.name} onChange={(name) => onChange({ ...pump, name })} />
       <Direction inLabel="SUCTION (in)" outLabel="DISCHARGE (out)" from={from} to={to} onSwap={() => onChange({ ...pump, from: pump.to, to: pump.from })} note="A pump only pushes flow from suction to discharge; flow cannot run backwards through it." />
+      <div className="curve-pick">
+        <label className="field">
+          <span>Pump curve</span>
+          <select value={lib ? lib.id : ''} onChange={(e) => onAssignCurve(e.target.value)} aria-label="Pump curve">
+            <option value="">Custom (this pump only)</option>
+            {curves.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </label>
+        <div className="toolbar">
+          <button onClick={onManageCurves} title="Open the pump curve library to add, paste or edit curves">Add / edit curves…</button>
+          {!lib && <button onClick={onSaveCurve} title="Save this pump's points as a reusable curve">Save to library</button>}
+        </div>
+        {curves.length === 0 && <p className="hint">No saved curves yet. “Add / edit curves…” lets you paste a datasheet table or generate one.</p>}
+        {lib && <p className="hint">Using “{lib.name}”. Edit it in the library and every pump using it updates.</p>}
+      </div>
       <div className="grid">
         <NumField label="Speed ratio N/N_rated" value={pump.speedRatio} onChange={(v) => onChange({ ...pump, speedRatio: v })} />
-        <NumField label="Rated speed" unit="rpm" value={pump.ratedRpm} onChange={(v) => onChange({ ...pump, ratedRpm: v })} />
+        <NumField label="Rated speed" unit="rpm" value={pump.ratedRpm} onChange={(v) => own({ ratedRpm: v })} />
+        <NumField label="Impeller trim D/D_full" value={pump.impellerTrim ?? 1} onChange={(v) => v > 0 && v <= 1 && onChange({ ...pump, impellerTrim: v })} title="1 = full diameter; 0.9 = trimmed to 90 %" />
       </div>
       <p className="hint">Head fit RMS error: {headFitRmse !== undefined ? U.fu('head', headFitRmse, 3) : '–'}</p>
-      <div className="three">
-        <Points title="Head curve" cols={['Q', 'H']} qty={['flow', 'head']} rows={pump.head} get={(r) => [r.q, r.h]} make={(q, h) => ({ q, h })} onChange={(head) => onChange({ ...pump, head })} />
-        <Points title="Efficiency (optional)" cols={['Q', 'η [%]']} qty={['flow', undefined]} rows={pump.efficiency} get={(r) => [r.q, r.eta]} make={(q, eta) => ({ q, eta })} onChange={(efficiency) => onChange({ ...pump, efficiency })} />
-        <Points title="NPSH required (optional)" cols={['Q', 'NPSHr']} qty={['flow', 'head']} rows={pump.npshr} get={(r) => [r.q, r.h]} make={(q, h) => ({ q, h })} onChange={(npshr) => onChange({ ...pump, npshr })} />
-      </div>
+      <details open={!lib}>
+        <summary>This pump's own points{lib ? ' (editing detaches it from the library curve)' : ''}</summary>
+        <div className="three">
+          <Points title="Head curve" cols={['Q', 'H']} qty={['flow', 'head']} rows={pump.head} get={(r) => [r.q, r.h]} make={(q, h) => ({ q, h })} onChange={(head) => own({ head })} />
+          <Points title="Efficiency (optional)" cols={['Q', 'η [%]']} qty={['flow', undefined]} rows={pump.efficiency} get={(r) => [r.q, r.eta]} make={(q, eta) => ({ q, eta })} onChange={(efficiency) => own({ efficiency })} />
+          <Points title="NPSH required (optional)" cols={['Q', 'NPSHr']} qty={['flow', 'head']} rows={pump.npshr} get={(r) => [r.q, r.h]} make={(q, h) => ({ q, h })} onChange={(npshr) => own({ npshr })} />
+        </div>
+      </details>
     </section>
   );
 }

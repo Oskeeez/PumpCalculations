@@ -486,7 +486,7 @@ function editTool(ws: Workspace, name: string, a: Record<string, unknown>): Tool
     if (want && names().includes(want)) throw new Error(`The name "${want}" is already used in this draft.`);
     return want ?? uniqueName(base, names());
   };
-  const pumpSet = (pump: PumpUI, c: ReturnType<typeof genericPumpCurves>) => { pump.head = c.head; pump.efficiency = c.efficiency; pump.npshr = c.npshr; pump.impellerTrim = 1; };
+  const pumpSet = (pump: PumpUI, c: ReturnType<typeof genericPumpCurves>) => { pump.head = c.head; pump.efficiency = c.efficiency; pump.npshr = c.npshr; pump.impellerTrim = 1; pump.curveId = undefined; };
   let data: Record<string, unknown> = {};
 
   switch (name) {
