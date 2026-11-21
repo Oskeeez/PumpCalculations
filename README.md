@@ -7,6 +7,7 @@ npm install
 npm run dev
 npm test
 npm run build
+npm run e2e      # browser tests (Playwright; first run: npx playwright install chromium)
 ```
 
 ## Features
@@ -17,6 +18,9 @@ npm run build
 - Fluids: water, seawater, ethylene and propylene glycol, custom.
 - Pump curves at several speeds (affinity laws), scenario comparison, SI and US units.
 - Save and open as JSON, autosave, undo and redo, Excel export.
+
+## Documentation
+- [`docs/THEORY.md`](docs/THEORY.md): the equations used, where they come from, how the solver is checked, and what it does not model.
 
 ## Workspace and pump curves
 - The page never scrolls. Everything lives in resizable **tiles**: drag a tab by its title to another tile's edge to dock it beside, or to the middle to add it as a tab. Drag the bars between tiles to resize (double-click to even out). The **Panels** menu shows or hides each panel, **Layout** has ready-made arrangements, and your layout is remembered.

@@ -47,10 +47,17 @@ export function validateValve(s: ValveSpec): void {
   if (s.loss.type === 'K' ? !(v >= 0) : !(v > 0)) throw new RangeError(s.loss.type === 'K' ? 'Valve K must be >= 0' : `Valve ${s.loss.type} must be > 0`);
 }
 
+/**
+ * Loss coefficient used for a valve entered with exactly K = 0. Such a valve would have no head loss at any flow, which the network
+ * solver cannot invert (the flow would be undetermined). 1e-4 is a fully open valve for every practical purpose (about 5
+ * micrometres of head at 10 m/s). Any K above zero is used as given.
+ */
+export const MIN_VALVE_K = 1e-4;
+
 /** R in  h = R Q|Q|  [m per (m3/s)^2]. */
 export function valveResistance(s: ValveSpec): number {
   const l = s.loss;
-  if (l.type === 'K') return l.k / (2 * G * pipeArea(s.diameterM) ** 2);
+  if (l.type === 'K') return (l.k === 0 ? MIN_VALVE_K : l.k) / (2 * G * pipeArea(s.diameterM) ** 2);
   if (l.type === 'Cv') return PSI / (RHO_REF * G * (l.cv * GPM) ** 2);
   return 1e5 / (RHO_REF * G * (l.kv / 3600) ** 2);
 }

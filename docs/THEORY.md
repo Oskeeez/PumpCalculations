@@ -1,0 +1,104 @@
+# Theory and limits
+
+What the calculator solves, the equations it uses, where they come from, and what it does **not** model. Everything here describes the code in `src/solver/`, which is plain TypeScript in SI units with no UI dependencies. The app shows and accepts other units, but stores and solves in SI.
+
+## What it solves
+
+**Steady-state, single-phase, incompressible liquid flow** in a network of tanks, junctions, pipes, valves and pumps, including branches and loops. Given tank levels, junction demands and equipment settings it finds every node head, every flow and every pump duty point.
+
+It does **not** model: transients or water hammer, gases or two-phase flow, slurries or non-Newtonian fluids, heat transfer, tank filling or draining over time (a tank is a fixed level), or pressure-dependent demand (a demand is a fixed withdrawal).
+
+## Unknowns and equations
+
+The unknowns are the heads `h_i` at the junctions. Tanks are fixed-head nodes. Continuity at every free junction:
+
+```
+sum(Q in) - sum(Q out) - q_i = 0        (q_i = demand, positive = withdrawal)
+```
+
+Each element (pipe, valve, pump) is a curve `h_from - h_to = headDrop(Q)`, inverted to give its flow. The network is solved by Newton–Raphson on the node heads with a sparse linear solve and a backtracking line search; the first iterations use a linear-theory (chord) step, which is robust far from the answer. Element inversion uses Brent's method. Convergence is on the largest node flow imbalance (default 1e-11 m³/s). The derivative of a quadratic loss is zero at zero flow, so it is floored (`MIN_HEAD_SLOPE`) to keep the system well conditioned.
+
+Heads are hydraulic grade (m of the flowing liquid). Gauge pressure at a node is `rho g (h - z)`.
+
+## Fluids
+
+Water uses fitted correlations valid 0 to 100 °C: Kell (1975) density, a Vogel equation for viscosity, and the Antoine equation for vapour pressure. Ethylene glycol 30 and 50 % (by mass), propylene glycol 30 and 50 % (by volume) and seawater (35 g/kg) use published tables, interpolated linearly in density and in ln(viscosity); asking for a temperature outside the table is an error, not an extrapolation. Vapour pressure of the glycol mixtures and seawater is estimated as pure-water vapour pressure times a Raoult's-law water fraction (an ideal-solution approximation). That is adequate for NPSH screening but not for designs close to vapour pressure. A custom fluid takes density, viscosity and vapour pressure as given and does not vary with temperature.
+
+## Pipes
+
+Darcy–Weisbach: `h_f = f (L / D) v^2 / 2g`, plus minor losses `h_m = (sum K) v^2 / 2g`.
+
+| Reynolds number | Friction factor |
+|---|---|
+| Re < 2300 | `f = 64 / Re`, written in the Hagen–Poiseuille form so it stays finite and linear as flow tends to zero |
+| 2300 to 4000 | a smooth (cubic smoothstep) blend of the laminar and Colebrook values, so head loss stays continuous and increasing. The result is flagged "transitional": the friction factor is uncertain there |
+| Re ≥ 4000 | Colebrook–White, solved by Newton iteration on `1/sqrt(f)` from a Swamee–Jain starting point |
+
+Pipe length is either typed or taken from the canvas: the straight-line 3D distance between the end nodes using the canvas scale and the node elevations. A real pipe is longer than the straight line where it bends, so use a typed length when the route is known.
+
+Fitting K values in the library are typical numbers for fully turbulent flow. They vary with size and manufacturer; they are not vendor data.
+
+A pipe with exactly zero length and no fittings has no resistance at all and is solved with a tiny coefficient (K = 1e-4) so the flow stays determined. Any pipe with any resistance is untouched.
+
+## Valves
+
+A fixed-resistance valve has `h = R Q |Q|`, with R from one of:
+
+- **K**: `R = K / (2 g A^2)`, referenced to the valve diameter.
+- **Cv** (US gpm at 1 psi drop): `R = 6894.757 / (rho_ref g (Cv x 6.309e-5)^2)`.
+- **Kv** (m³/h at 1 bar drop): `R = 1e5 / (rho_ref g (Kv / 3600)^2)`.
+
+The Cv and Kv forms use a reference density of 999 kg/m³ (the definition is for water), so they give the same head loss for any liquid. A valve entered with exactly K = 0 is solved with K = 1e-4.
+
+**Check valve**: reverse flow is blocked by a very stiff resistance (K = 1e12), not by an exact zero. Leakage against tens of metres of reverse head is below 0.02 L/s, which is negligible; the closed state is reported as a warning.
+
+**Orifice plate** (square-edged, in a full pipe, ISO 5167-2 relations). With `beta = d / D` and discharge coefficient `Cd` (default 0.61):
+
+```
+K_measured  = (1 - beta^4) / (Cd^2 beta^4)                               referenced to pipe velocity
+K_permanent = K_measured x (sqrt(1 - beta^4 (1 - Cd^2)) - Cd beta^2)
+                         / (sqrt(1 - beta^4 (1 - Cd^2)) + Cd beta^2)
+```
+
+The pump has to overcome the **permanent** loss, which is smaller than the pressure difference a flow meter reads across the plate. Cd really depends on Reynolds number, beta and the pressure-tap arrangement; 0.61 is the usual high-Reynolds-number value, so treat results as estimates, not as a meter sizing.
+
+**Regulating valves**, handled by an active-set loop that tries each regulator open, active and closed until the states agree:
+
+- *PRV (pressure-reducing)*: when upstream pressure is higher than the setting, holds the downstream node at the set pressure; otherwise it is an ordinary open valve.
+- *PSV (pressure-sustaining)*: holds the upstream node at the set pressure by throttling.
+- *FCV (flow-control)*: passes the set flow when the network would pass more, otherwise open.
+- All three block reverse flow. A regulator cannot regulate the head of a tank; it then acts as an open valve (and says so).
+
+## Pumps
+
+A pump is fitted at rated speed with a least-squares quadratic through the head points: `H(Q) = a0 + a1 Q + a2 Q^2`. Efficiency and NPSH required (if at least two points are given) are fitted the same way. The fit error is shown. Three or more head points are recommended; the app warns if the pump runs past the end of the head data (the curve is then extrapolated).
+
+**Affinity laws** for speed ratio `r = N / N_rated`: `H(Q, r) = r^2 H1(Q / r)`, `eta(Q, r) = eta1(Q / r)`, `NPSHr(Q, r) = r^2 NPSHr1(Q / r)`.
+
+**Impeller trim** `t = D / D_full` scales the data before fitting: `Q ∝ t`, `H ∝ t^2`, `NPSHr` head ∝ `t^2`, efficiency unchanged. Trim and speed are separate; efficiency is not corrected for the loss that real trimming causes.
+
+**Best-efficiency point** is the maximum of the fitted efficiency curve over the head-data flow range, scaled by speed ratio. "Percent of BEP" is the operating flow divided by it.
+
+**Reverse flow** is blocked by the same kind of stiff resistance as a check valve. A pump whose shutoff head is below the static lift simply gives no flow.
+
+**NPSH available**: `NPSHa = h_suction - z_suction + (p_atm - p_v) / (rho g) + v_s^2 / 2g`, with `h_suction` the hydraulic grade at the suction node (gauge) and `v_s` the velocity in the suction pipe. A warning appears when `NPSHa < NPSHr + margin` (margin set in the top bar, default 0.5 m).
+
+**Power**: hydraulic `rho g Q H`; shaft = hydraulic / efficiency (when efficiency data exist).
+
+## Design alerts
+
+Velocity above the limit set in the top bar (0 = off) is flagged on pipes and valves. Warnings are also raised for sub-atmospheric pressure, pressure below vapour pressure, a closed check valve, transitional flow, a pump with no forward flow and a pump beyond its curve data.
+
+## How it is checked
+
+- Hand calculations and published values for friction factors (Moody chart points), orifice coefficients, Cv/Kv conversions, affinity laws and pump operating points.
+- EPANET 2.2 cross-checks (`tests/validation/`): Net1 with Hazen–Williams (heads within 1.3e-5 ft) and with Darcy–Weisbach; and a second set covering pressure-reducing, pressure-sustaining and flow-control valves, a throttle valve, check valves (blocking and passing) and single and parallel pumps. Pipes in EPANET use the Swamee–Jain formula and here Colebrook–White, so flows agree to about 1 % at normal velocities and the tests allow for that.
+- Round-trip of the Excel export: every formula in the exported workbook is recalculated with an independent engine and compared with the solver.
+- Robustness tests for degenerate inputs (zero-length pipes, K = 0 and K = 1e9 valves, empty tanks, dead-ended pumps, isolated sections).
+- A grid benchmark (about 85 pipes in 24 ms, 420 pipes in 92 ms, 2,000 pipes in about 0.7 s on a laptop-class machine).
+
+**Not yet validated against published textbook worked examples**: the Crane TP-410 examples are placeholders in `tests/validation/external-validation.test.ts`, because the exact worked values need to be copied from the book with their page references. Until then, treat agreement with Crane as unproven.
+
+## Using the results
+
+This is an engineering aid, not a certified design tool. Check the inputs (especially roughness, fitting K values and pump curves), compare against vendor data, and have a competent engineer review any design before it is built.

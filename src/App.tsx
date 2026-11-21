@@ -20,7 +20,7 @@ import { EXPORT_THEME, SCREEN_THEME, SI_AXES, pumpChartSvg, CHART_H, CHART_W } f
 import { calibrate } from './geometry';
 import { useHistory } from './history';
 import { Workspace } from './layout/Workspace';
-import { activatePanel, loadLayout, openPanel, saveLayout, type LayoutNode, type PanelId } from './layout/layout';
+import { activatePanel, groupOfPanel, loadLayout, openPanel, saveLayout, type LayoutNode, type PanelId } from './layout/layout';
 import { blankProject, compute, defaultProject, hydraulicKey, parseProject, pipeLengthM, syncUidCounter, type EdgeUI, type ProjectUI } from './model';
 import { exportWorkbook } from './state/exportWorkbook';
 import { downloadProject, loadInitial, loadUnits, useAutosave } from './state/persistence';
@@ -74,20 +74,27 @@ export function App() {
     [computed, axes],
   );
 
+  /** True when a panel is the visible tab of its tile. Heavy secondary calculations only run for panels that can be seen. */
+  const visible = (id: PanelId) => groupOfPanel(layout, id)?.active === id;
+  const speedVisible = visible('speed');
+  const scenariosVisible = visible('scenarios');
+
   const pumpEdges = project.edges.filter((e): e is Extract<EdgeUI, { kind: 'pump' }> => e.kind === 'pump');
   const speedPumpUid = pumpEdges.some((p) => p.uid === speedCfg.pumpUid) ? speedCfg.pumpUid : (pumpEdges[0]?.uid ?? '');
+  const runSweep = () => (speedPumpUid ? speedSweep(project, speedPumpUid, speedRatios(speedCfg.minPct, speedCfg.maxPct, speedCfg.stepPct)) : undefined);
   const sweep = useMemo(
-    () => (speedPumpUid ? speedSweep(project, speedPumpUid, speedRatios(speedCfg.minPct, speedCfg.maxPct, speedCfg.stepPct)) : undefined),
+    () => (speedVisible ? runSweep() : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [key, speedPumpUid, speedCfg.minPct, speedCfg.maxPct, speedCfg.stepPct],
+    [speedVisible, key, speedPumpUid, speedCfg.minPct, speedCfg.maxPct, speedCfg.stepPct],
   );
 
   const scenarios = project.scenarios ?? [];
   const scenarioKey = JSON.stringify(scenarios);
+  const runComparison = () => compareScenarios([{ name: 'Current', computed }, ...scenarios.map((s) => ({ name: s.name, computed: compute(s.project) }))]);
   const comparison = useMemo(
-    () => compareScenarios([{ name: 'Current', computed }, ...scenarios.map((s) => ({ name: s.name, computed: compute(s.project) }))]),
+    () => (scenariosVisible ? runComparison() : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [computed, scenarioKey],
+    [scenariosVisible, computed, scenarioKey],
   );
 
   const targets = project.targets ?? [];
@@ -159,7 +166,8 @@ export function App() {
   const exportXlsx = async () => {
     setMessage(undefined);
     try {
-      await exportWorkbook({ project, computed, chartSvg: chart?.exportSvg, sweep, comparison: scenarios.length ? comparison : undefined });
+      // panels that are not on screen do not keep their results up to date, so work them out now
+      await exportWorkbook({ project, computed, chartSvg: chart?.exportSvg, sweep: sweep ?? runSweep(), comparison: scenarios.length ? (comparison ?? runComparison()) : undefined });
     } catch (err) {
       setMessage({ kind: 'error', text: `Export failed: ${err instanceof Error ? err.message : String(err)}` });
     }
@@ -349,7 +357,7 @@ export function App() {
       case 'speed':
         return <SpeedPanel pumps={pumpEdges} config={{ ...speedCfg, pumpUid: speedPumpUid }} onConfig={setSpeedCfg} sweep={sweep} pickId={pick?.id} onPick={startPick} />;
       case 'scenarios':
-        return <ScenarioPanel scenarios={scenarios} comparison={comparison} onSave={saveScenario} onLoad={loadScenario} onDelete={deleteScenario} onRename={renameScenario} />;
+        return <ScenarioPanel scenarios={scenarios} comparison={comparison ?? runComparison()} onSave={saveScenario} onLoad={loadScenario} onDelete={deleteScenario} onRename={renameScenario} />;
       case 'view3d':
         return (
           <Suspense fallback={<p className="hint">Loading 3D view…</p>}>

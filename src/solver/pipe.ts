@@ -76,12 +76,22 @@ export function pipeFlowState(spec: PipeSpec, fluid: Fluid, flowM3s: number): Pi
   };
 }
 
+/**
+ * Loss coefficient used for a pipe with exactly zero resistance (zero length and no fittings). Such a pipe would have no head loss
+ * at any flow, which the network solver cannot invert (the flow would be undetermined). 1e-4 is a straight connection for every
+ * practical purpose. Pipes with any resistance at all are not touched.
+ */
+export const MIN_PIPE_K = 1e-4;
+
 /** Pipe as a network element: headDrop(Q) is an odd function of Q. */
 export function createPipeElement(spec: PipeSpec, fluid: Fluid): HydraulicElement {
   validatePipe(spec);
+  const area = pipeArea(spec.innerDiameterM);
+  const degenerate = spec.lengthM === 0 && totalK(spec) === 0;
+  const floor = degenerate ? MIN_PIPE_K / (2 * G * area * area) : 0; // head per (m3/s)^2
   const loss = (q: number): number => {
     const s = Math.sign(q);
-    return s * pipeFlowState(spec, fluid, q).totalHeadLoss;
+    return s * (pipeFlowState(spec, fluid, q).totalHeadLoss + floor * q * q);
   };
   return {
     kind: 'pipe',
