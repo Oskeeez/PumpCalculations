@@ -7,9 +7,9 @@ const TOOLS: { id: Exclude<Tool, 'select' | 'scale'>; label: string; title: stri
   { id: 'tank', label: '▭ Tank', title: 'Place a tank' },
   { id: 'junction', label: '● Junction', title: 'Place a junction' },
   { id: 'pipe', label: '— Pipe', title: 'Drag from node to node' },
-  { id: 'valve', label: '⋈ Valve', title: 'Click a pipe to insert, or drag from node to node' },
-  { id: 'orifice', label: '⫴ Orifice', title: 'Click a pipe to insert an orifice plate, or drag from node to node' },
-  { id: 'pump', label: '◉ Pump', title: 'Drag from suction node to discharge node' },
+  { id: 'valve', label: '⋈ Valve', title: 'Click a pipe or empty space, or click two nodes' },
+  { id: 'orifice', label: '⫴ Orifice', title: 'Click a pipe or empty space, or click two nodes' },
+  { id: 'pump', label: '◉ Pump', title: 'Click a pipe or empty space, or click the suction node then the discharge node' },
 ];
 
 interface Props {

@@ -55,6 +55,31 @@ describe('drawing tools', () => {
     await s.close();
   });
 
+  it('only pipes are drawn by dragging: a valve is placed where it is clicked, even if the mouse moves', async () => {
+    const s = await open(app);
+    const c = await canvasBox(s);
+    const n0 = await count(s.page, 'g.node');
+    const pipes0 = await count(s.page, 'g.edge.pipe');
+    const valves0 = await count(s.page, 'g.edge.valve');
+    await tool(s, 'Valve').click();
+    // a drag across blank space places one valve at the start point, not node-valve-node with a pipe
+    await drag(s.page, { x: c.x + c.width * 0.15, y: c.y + c.height * 0.9 }, { x: c.x + c.width * 0.15 + 150, y: c.y + c.height * 0.9 });
+    expect(await count(s.page, 'g.edge.valve')).toBe(valves0 + 1);
+    expect(await count(s.page, 'g.edge.pipe')).toBe(pipes0);
+    expect(await count(s.page, 'g.node')).toBe(n0 + 2);
+    // dragging from a node with the valve tool creates nothing
+    const node = await center(s.page.locator('g.node.junction').first());
+    await drag(s.page, node, { x: node.x + 120, y: node.y + 80 });
+    expect(await count(s.page, 'g.edge.valve')).toBe(valves0 + 1);
+    expect(await count(s.page, 'g.node')).toBe(n0 + 2);
+    // junctions can still be placed on empty space
+    await tool(s, 'Junction').click();
+    await s.page.mouse.click(c.x + c.width * 0.6, c.y + c.height * 0.93);
+    expect(await count(s.page, 'g.node')).toBe(n0 + 3);
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+
   it('place a pump on its own and reverse its direction', async () => {
     const s = await open(app);
     const n0 = await count(s.page, 'g.node');

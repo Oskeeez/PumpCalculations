@@ -117,9 +117,9 @@ const HINTS: Partial<Record<Tool, string>> = {
   tank: 'Click empty space to place a tank, or click a pipe to split it with a tank',
   junction: 'Click empty space to place a junction, or click a pipe to split it',
   pipe: 'Drag from node to node, or drag across blank space to create both ends',
-  valve: 'Click a pipe to insert a valve, click empty space to place one, or drag to draw one between two nodes',
-  orifice: 'Click a pipe to insert an orifice plate, click empty space to place one, or drag to draw one between two nodes',
-  pump: 'Click a pipe to insert a pump, click empty space to place one, or drag from suction to discharge',
+  valve: 'Click a pipe to insert a valve, click empty space to place one, or click two nodes',
+  orifice: 'Click a pipe to insert an orifice plate, click empty space to place one, or click two nodes',
+  pump: 'Click a pipe to insert a pump, click empty space to place one, or click the suction node then the discharge node',
   scale: 'Click two points a known distance apart',
 };
 
@@ -222,6 +222,9 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
       // first node picked, then a click in empty space: the end becomes a new node there
       onConnectNew(tool as ConnectKind, pending, snap(p.x), snap(p.y));
       onPending(undefined);
+    } else if (isConnect && tool !== 'pipe') {
+      // valves, orifices and pumps are placed with a click; only pipes are drawn by dragging
+      onPlace(tool as 'pump' | 'valve' | 'orifice', snap(p.x), snap(p.y));
     } else if (isConnect) {
       // press on blank canvas and drag: both ends become new nodes. A plain click places a pump / valve / orifice on its own.
       setLink({ kind: tool as ConnectKind, from: '', sx: p.x, sy: p.y, x: p.x, y: p.y, moved: false });
@@ -261,6 +264,11 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
       if (pending && pending !== n.uid) {
         onConnect(tool as ConnectKind, pending, n.uid);
         onPending(undefined);
+        return;
+      }
+      if (tool !== 'pipe') {
+        // a click picks the first node; a click on a second node (or empty space) completes it. No dragging.
+        onPending(pending === n.uid ? undefined : n.uid);
         return;
       }
       const p = toSvg(e);
