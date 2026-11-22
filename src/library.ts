@@ -21,8 +21,12 @@ export const MATERIALS: readonly Material[] = [
 
 export interface NominalSize {
   nps: string;
-  /** Inside diameter, Schedule 40 steel pipe [mm]. */
+  /** Inside diameter [mm]. */
   idMm: number;
+  /** Optional data from a company list. */
+  odMm?: number;
+  roughnessMm?: number;
+  ratingKPaG?: number;
 }
 
 /** ASME B36.10M Schedule 40 steel pipe inside diameters. */
@@ -83,6 +87,8 @@ export interface PipeSeries {
   id: string;
   label: string;
   sizes: readonly NominalSize[];
+  /** True for a series imported by the user. */
+  custom?: boolean;
 }
 
 /** Standard pipe size series for the pipe editor. Typical inside diameters: check against the pipe you will buy. */
@@ -93,8 +99,8 @@ export const PIPE_SERIES: readonly PipeSeries[] = [
 ];
 
 /** The series and nominal size whose inside diameter is within 1 % of the given one, if any. */
-export function matchPipeSize(idMm: number, preferred?: string): { series: string; nps: string } | undefined {
-  const order = [...PIPE_SERIES].sort((a, b) => (a.id === preferred ? -1 : b.id === preferred ? 1 : 0));
+export function matchPipeSize(idMm: number, preferred?: string, all: readonly PipeSeries[] = PIPE_SERIES): { series: string; nps: string } | undefined {
+  const order = [...all].sort((a, b) => (a.id === preferred ? -1 : b.id === preferred ? 1 : 0));
   for (const series of order) {
     const hit = series.sizes.find((s) => Math.abs(s.idMm - idMm) / s.idMm < 0.01);
     if (hit) return { series: series.id, nps: hit.nps };

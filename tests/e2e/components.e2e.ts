@@ -1,0 +1,62 @@
+import ExcelJS from 'exceljs';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { open, startApp, type App } from './harness';
+
+let app: App;
+beforeAll(async () => { app = await startApp(); });
+afterAll(async () => { await app.close(); });
+
+describe('fittings and pipe library', () => {
+  it('turns a junction into an elbow from the drop-down and shows it on the network', async () => {
+    const s = await open(app);
+    await s.page.locator('g.node.junction').first().click({ force: true });
+    await s.page.locator('.ws-tab', { hasText: 'Properties' }).first().click();
+    await s.page.getByLabel('Junction fitting').selectOption('elbow');
+    expect(await s.page.locator('.side .editor input').first().inputValue()).toMatch(/^Elbow/);
+    expect(await s.page.locator('svg.canvas .t-sub', { hasText: /Elbow/ }).count()).toBeGreaterThan(0);
+    await s.page.getByLabel('Junction fitting').selectOption('none');
+    expect(await s.page.locator('svg.canvas .t-sub', { hasText: /Elbow/ }).count()).toBe(0);
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+
+  it('chooses the type of junction to place from the toolbar', async () => {
+    const s = await open(app);
+    await s.page.getByLabel('Junction type').selectOption('tee');
+    expect(await s.page.getByLabel('Junction type').inputValue()).toBe('tee');
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+
+  it('imports company pipe sizes from an Excel file and offers them in the pipe editor', async () => {
+    const s = await open(app);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sizes');
+    ws.addRow(['Series', 'Nominal size', 'Inside diameter (mm)', 'Roughness (mm)']);
+    ws.addRow(['Acme PE', 'DN40', 36.2, 0.0015]);
+    ws.addRow(['Acme PE', 'DN75', 66.0, 0.0015]);
+    ws.addRow(['Acme PE', 'bad', 'x', '']);
+    const nodeBuffer = (globalThis as unknown as { Buffer: { from: (b: ArrayBuffer) => never } }).Buffer; // Playwright wants a Buffer; the project has no Node typings
+    const buffer = nodeBuffer.from((await wb.xlsx.writeBuffer()) as ArrayBuffer);
+
+    await s.page.locator('.ws-tab', { hasText: 'Pipe sizes' }).first().click();
+    await s.page.getByLabel('Pipe size file').setInputFiles({ name: 'sizes.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer });
+    await s.page.waitForSelector('.pipelib .banner');
+    expect(await s.page.locator('.pipelib .banner').textContent()).toMatch(/Imported 2 sizes/);
+    await s.page.getByLabel('Standard pipe list').selectOption({ label: 'Acme PE' });
+
+    await s.page.locator('g.edge.pipe .edge-line').first().click({ force: true });
+    await s.page.locator('.ws-tab', { hasText: 'Properties' }).first().click();
+    await s.page.getByLabel('Pipe size series').selectOption({ label: 'Acme PE' });
+    await s.page.getByLabel('Nominal pipe size').selectOption('DN40');
+    expect(await s.page.getByLabel('Inner diameter').first().inputValue()).toMatch(/36\.2/);
+
+    // the standard-size finder uses the same list
+    await s.page.locator('.size-for summary').click();
+    await s.page.getByLabel('Goal').selectOption('limits');
+    await s.page.getByRole('button', { name: 'Find standard size' }).click();
+    expect(await s.page.locator('.size-for .banner').first().textContent()).toMatch(/DN40|DN75|No size/);
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+});

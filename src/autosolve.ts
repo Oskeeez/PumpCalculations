@@ -14,7 +14,8 @@ import { estimateCost } from './ai/drafts';
 import { DEFAULT_CRITERIA } from './ai/criteria';
 import { evaluateTargets, feasibilityNotes, totalShortfall } from './ai/targets';
 import type { Target, TargetStatus } from './ai/types';
-import { PIPE_SERIES, matchPipeSize } from './library';
+import { matchPipeSize } from './library';
+import { allPipeSeries } from './pipeLibrary';
 import { compute, type EdgeUI, type ProjectUI } from './model';
 
 export interface SolveSettings {
@@ -128,7 +129,7 @@ export function findVariables(p: ProjectUI, s: SolveSettings, locked: ReadonlySe
   for (const e of p.edges) {
     if (!edgeFree(e)) continue;
     if (e.kind === 'pipe' && s.pipes.on) {
-      const series = PIPE_SERIES.find((x) => x.id === s.pipes.series) ?? PIPE_SERIES[0];
+      const series = allPipeSeries().find((x) => x.id === s.pipes.series) ?? allPipeSeries()[0];
       const sizes = series.sizes.map((x) => x.idMm).filter((d) => d >= s.pipes.minMm && d <= s.pipes.maxMm);
       const values = [...new Set([...sizes, e.diameterMm])].sort((a, b) => a - b);
       if (values.length > 1) {
@@ -136,7 +137,7 @@ export function findVariables(p: ProjectUI, s: SolveSettings, locked: ReadonlySe
           uid: e.uid, component: e.name, parameter: 'diameter', kind: 'discrete', values, lo: values[0], hi: values[values.length - 1], log: false, start: e.diameterMm,
           apply: (q, v) => mapEdge(q, e.uid, (x) => (x.kind === 'pipe' ? { ...x, diameterMm: v } : x)),
           format: (v) => {
-            const m = matchPipeSize(v, s.pipes.series);
+            const m = matchPipeSize(v, s.pipes.series, allPipeSeries());
             return `${fmt(v, 1)} mm${m ? ` (${m.nps})` : ''}`;
           },
         });

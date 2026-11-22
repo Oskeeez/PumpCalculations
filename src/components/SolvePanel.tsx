@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { TargetStatus } from '../ai/types';
 import { DEFAULT_SOLVE_SETTINGS, type SolveOutcome, type SolveSettings } from '../autosolve';
-import { PIPE_SERIES } from '../library';
+import { usePipeLibrary } from '../pipeLibrary';
 import type { ProjectUI } from '../model';
 import { NumField } from './NumField';
 
@@ -45,6 +45,7 @@ const STATUS_TEXT: Record<SolveOutcome['status'], { kind: 'ok' | 'warn' | 'error
 
 /** "Solve this for me": choose what may change and what must not, run the search, review the changes, then apply them (one undo step). */
 export function SolvePanel(p: Props) {
+  const lib = usePipeLibrary();
   const s = p.settings;
   const set = <K extends keyof SolveSettings>(k: K, v: SolveSettings[K]) => p.onSettings({ ...s, [k]: v });
   const failing = p.statuses.filter((x) => !x.pass);
@@ -109,7 +110,7 @@ export function SolvePanel(p: Props) {
           {s.pipes.on && (
             <div className="grid">
               <label className="field"><span>Size series</span>
-                <select value={s.pipes.series} onChange={(e) => set('pipes', { ...s.pipes, series: e.target.value })}>{PIPE_SERIES.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select>
+                <select value={s.pipes.series} onChange={(e) => set('pipes', { ...s.pipes, series: e.target.value })}>{lib.all.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select>
               </label>
               <NumField label="Smallest" q="diameter" value={s.pipes.minMm} onChange={(v) => v > 0 && set('pipes', { ...s.pipes, minMm: v })} />
               <NumField label="Largest" q="diameter" value={s.pipes.maxMm} onChange={(v) => v > 0 && set('pipes', { ...s.pipes, maxMm: v })} />

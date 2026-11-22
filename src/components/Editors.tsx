@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
-import { MATERIALS, PIPE_SERIES, matchMaterial, matchPipeSize } from '../library';
+import { MATERIALS, matchMaterial, matchPipeSize } from '../library';
+import { usePipeLibrary } from '../pipeLibrary';
 import { defaultControl, type EdgeUI, type FittingUI, type NodeUI, type PipeUI, type PumpControl, type PumpCurveEntry, type PumpUI, type ValveControlType, type ValveLossType, type ValveUI } from '../model';
 import { orificeBoreForDrop, requiredCv, requiredKv } from '../sizing';
 import { ELBOW_STYLES, FITTING_LIBRARY, JUNCTION_FITTING_LABELS, VALVE_TYPES, fittingK, fittingStatus, valveTypeK, type ElbowStyle, type JunctionFitting, type JunctionFittingType } from '../fittings';
@@ -106,9 +107,10 @@ export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: 
   const U = useUnits();
   const setFit = (i: number, f: FittingUI) => onChange({ ...pipe, fittings: pipe.fittings.map((x, j) => (j === i ? f : x)) });
   const total = pipe.fittings.reduce((s, f) => s + f.k, 0);
-  const matched = matchPipeSize(pipe.diameterMm);
+  const lib = usePipeLibrary();
+  const matched = matchPipeSize(pipe.diameterMm, undefined, lib.all);
   const [series, setSeries] = useState(matched?.series ?? 'sch40');
-  const seriesDef = PIPE_SERIES.find((x) => x.id === series) ?? PIPE_SERIES[0];
+  const seriesDef = lib.all.find((x) => x.id === series) ?? lib.all[0];
   return (
     <section className="editor">
       <h3>Pipe</h3>
@@ -147,12 +149,12 @@ export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: 
         <label className="field">
           <span>Size series</span>
           <select value={series} onChange={(e) => setSeries(e.target.value)} aria-label="Pipe size series">
-            {PIPE_SERIES.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+            {lib.all.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
           </select>
         </label>
         <label className="field">
           <span>Nominal size</span>
-          <select value={matched?.series === series ? matched.nps : ''} aria-label="Nominal pipe size" onChange={(e) => { const sz = seriesDef.sizes.find((x) => x.nps === e.target.value); if (sz) onChange({ ...pipe, diameterMm: sz.idMm }); }}>
+          <select value={matched?.series === series ? matched.nps : ''} aria-label="Nominal pipe size" onChange={(e) => { const sz = seriesDef.sizes.find((x) => x.nps === e.target.value); if (sz) onChange({ ...pipe, diameterMm: sz.idMm, ...(sz.roughnessMm !== undefined ? { roughnessMm: sz.roughnessMm } : {}), ...(sz.ratingKPaG !== undefined ? { ratingKPaG: sz.ratingKPaG } : {}) }); }}>
             <option value="">Custom</option>
             {seriesDef.sizes.map((sz) => <option key={sz.nps} value={sz.nps}>{sz.nps} ({U.f('diameter', sz.idMm, 2)} {U.u('diameter')} ID)</option>)}
           </select>

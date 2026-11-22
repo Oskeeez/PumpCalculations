@@ -19,6 +19,7 @@ import { ScenarioPanel } from './components/ScenarioPanel';
 import { SpeedPanel, type SpeedConfig } from './components/SpeedPanel';
 import { TargetsPanel } from './components/TargetsPanel';
 import { SolvePanel } from './components/SolvePanel';
+import { PipeLibraryPanel } from './components/PipeLibraryPanel';
 import { SizeForPanel } from './components/SizeForPanel';
 import type { JunctionFittingType } from './fittings';
 import { DEFAULT_SOLVE_SETTINGS, solveForTargets, type SolveOutcome, type SolveSettings } from './autosolve';
@@ -460,6 +461,8 @@ export function App() {
                 project={project}
                 edge={selEdge}
                 locked={lockedSet}
+                flowLps={Math.abs(computed.result?.pipes.find((x) => x.id === selEdge.name)?.flowM3s ?? 0) * 1000}
+                fluid={computed.model?.fluid}
                 onApply={(next, text) => { setProject({ ...next, locked: project.locked }); setMessage({ kind: 'info', text: `Applied: ${text}.` }); }}
               />
             )}
@@ -485,6 +488,8 @@ export function App() {
             onShowTargets={() => showPanel('targets')}
           />
         );
+      case 'pipelib':
+        return <PipeLibraryPanel />;
       case 'pumpcurves':
         return <PumpCurvesPanel curves={lib.curves} pumps={pumpEdges} selectedPump={selEdge?.kind === 'pump' ? selEdge : undefined} focusId={lib.curveFocus} onChange={lib.updateCurves} onUse={lib.assignCurve} />;
       case 'results':
