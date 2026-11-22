@@ -13,6 +13,7 @@ interface Props {
   onExample: () => void;
   onOpenFile: (file: File) => void;
   onSave: () => void;
+  onExportInp: () => void;
   unitSystem: UnitSystem;
   onUnits: (u: UnitSystem) => void;
   layout: LayoutNode;
@@ -35,9 +36,10 @@ export function TopBar(p: Props) {
         <span className="sep" />
         <button onClick={p.onNew}>New</button>
         <button onClick={p.onExample}>Example</button>
-        <button onClick={() => fileInput.current?.click()}>Open…</button>
+        <button onClick={() => fileInput.current?.click()} title="Project (.json), EPANET (.inp) or piping component file (.pcf)">Open…</button>
         <button onClick={p.onSave}>Save…</button>
-        <input ref={fileInput} type="file" accept=".json,application/json" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) p.onOpenFile(f); }} />
+        <button onClick={p.onExportInp} title="EPANET input file">Export .inp</button>
+        <input ref={fileInput} type="file" accept=".json,.inp,.pcf,application/json" aria-label="Open project file" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) p.onOpenFile(f); }} />
         <span className="sep" />
         <span className="seg" role="group" aria-label="Unit system">
           <button className={p.unitSystem === 'si' ? 'active' : ''} aria-pressed={p.unitSystem === 'si'} onClick={() => p.onUnits('si')}>SI</button>

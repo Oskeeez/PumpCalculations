@@ -93,3 +93,18 @@ describe('fitting library', () => {
     await s.close();
   });
 });
+
+describe('EPANET files', () => {
+  it('opens an .inp file and exports one', async () => {
+    const s = await open(app);
+    const nodeBuffer = (globalThis as unknown as { Buffer: { from: (b: string) => never } }).Buffer;
+    const text = `[JUNCTIONS]\n J1 0 2\n[RESERVOIRS]\n R1 30\n[PIPES]\n P1 R1 J1 200 100 0.05 0 Open\n[OPTIONS]\n Units LPS\n Headloss D-W\n[COORDINATES]\n R1 0 0\n J1 100 0\n[END]\n`;
+    await s.page.getByLabel('Open project file').setInputFiles({ name: 'net.inp', mimeType: 'text/plain', buffer: nodeBuffer.from(text) });
+    await expect.poll(() => s.page.locator('g.node').count()).toBe(2);
+    expect(await s.page.locator('g.edge.pipe').count()).toBe(1);
+    const [dl] = await Promise.all([s.page.waitForEvent('download'), s.page.getByRole('button', { name: 'Export .inp' }).click()]);
+    expect(dl.suggestedFilename()).toBe('network.inp');
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+});

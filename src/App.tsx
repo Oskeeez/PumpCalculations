@@ -19,6 +19,8 @@ import { ScenarioPanel } from './components/ScenarioPanel';
 import { SpeedPanel, type SpeedConfig } from './components/SpeedPanel';
 import { TargetsPanel } from './components/TargetsPanel';
 import { SolvePanel } from './components/SolvePanel';
+import { parseInp, toInp } from './epanet';
+import { download } from './download';
 import { PipeLibraryPanel } from './components/PipeLibraryPanel';
 import { FittingLibraryPanel } from './components/FittingLibraryPanel';
 import { SizeForPanel } from './components/SizeForPanel';
@@ -215,7 +217,13 @@ export function App() {
   };
   const openFile = async (file: File) => {
     try {
-      replaceProject(parseProject(await file.text()), `Opened ${file.name}.`);
+      const text = await file.text();
+      if (/\.inp$/i.test(file.name)) {
+        const r = parseInp(text);
+        replaceProject(r.project, `Imported ${file.name}: ${r.project.nodes.length} nodes, ${r.project.edges.length} links.${r.notes.length ? ' ' + r.notes.join(' ') : ''}`);
+      } else {
+        replaceProject(parseProject(text), `Opened ${file.name}.`);
+      }
     } catch (err) {
       setMessage({ kind: 'error', text: `Could not open ${file.name}: ${err instanceof Error ? err.message : String(err)}` });
     }
@@ -585,6 +593,15 @@ export function App() {
           onExample={() => replaceProject(defaultProject())}
           onOpenFile={(f) => void openFile(f)}
           onSave={() => downloadProject(project, drafts)}
+          onExportInp={() => {
+            try {
+              const r = toInp(project);
+              download(new Blob([r.text], { type: 'text/plain' }), 'network.inp');
+              setMessage(r.notes.length ? { kind: 'info', text: r.notes.join(' ') } : undefined);
+            } catch (err) {
+              setMessage({ kind: 'error', text: `Could not export: ${err instanceof Error ? err.message : String(err)}` });
+            }
+          }}
           unitSystem={unitSystem}
           onUnits={setUnitSystem}
           layout={layout}
