@@ -6,7 +6,7 @@
  * units and head-loss formula. Time patterns, controls, rules, water quality and energy are ignored, and listed in the notes.
  * The network is a snapshot at time zero: tanks at their initial level, demand multipliers of 1.
  */
-import { DEFAULT_HAZEN_C, blankProject, newUid, toSystemModel, type EdgeUI, type NodeUI, type PipeUI, type ProjectUI, type PumpUI, type ValveUI } from './model';
+import { DEFAULT_HAZEN_C, blankProject, emitterKv, newUid, outletNames, toSystemModel, type EdgeUI, type NodeUI, type PipeUI, type ProjectUI, type PumpUI, type ValveUI } from './model';
 import { valveEquivalentK } from './solver/valve';
 
 const G = 9.80665;
@@ -199,7 +199,19 @@ export function parseInp(text: string): InpImport {
     } else if (e.kind === 'pump' && Number.isFinite(Number(s))) e.speedRatio = Number(s);
   }
 
-  for (const name of ['CONTROLS', 'RULES', 'QUALITY', 'REACTIONS', 'SOURCES', 'MIXING', 'ENERGY', 'EMITTERS', 'LABELS', 'BACKDROP', 'TAGS']) {
+  // emitters: q = C p^0.5 in the file's flow and pressure units
+  for (const r of get('EMITTERS')) {
+    const n = nodes.get(r[0]);
+    const c = num(r[1], `Emitter at ${r[0]}`);
+    if (!n || !(c > 0)) continue;
+    // to L/min per sqrt(bar): US files are gpm per sqrt(psi) times the flow unit's size in gpm; SI files use metres of water
+    n.emitter = us
+      ? { k: (c * q) / FLOW_LPS.GPM, unit: 'gpm-psi' }
+      : { k: c * q * 60 * Math.sqrt(1e5 / (999 * G)), unit: 'lpm-bar' };
+  }
+  for (const r of get('OPTIONS')) if (r[0].toUpperCase() === 'EMITTER' && Number(r[2]) !== 0.5) notes.push(`Emitter exponent ${r[2]} is not supported: outlets use 0.5.`);
+
+  for (const name of ['CONTROLS', 'RULES', 'QUALITY', 'REACTIONS', 'SOURCES', 'MIXING', 'ENERGY', 'LABELS', 'BACKDROP', 'TAGS']) {
     if (get(name).length) notes.push(`[${name}] is ignored.`);
   }
 
@@ -285,12 +297,13 @@ export function toInp(project: ProjectUI, title = 'Exported from the pipe networ
   const id = (s: string) => s.replace(/\s+/g, '_').replace(/;/g, ',');
   const f = (v: number, d = 4) => String(+v.toFixed(d));
   const L: string[] = [`[TITLE]`, title, ''];
+  const outlets = new Set(project.nodes.filter((n) => n.kind === 'junction' && n.emitter).flatMap((n) => [outletNames(n.name).valve, outletNames(n.name).sink]));
 
   L.push('[JUNCTIONS]', ';ID  Elev(m)  Demand(L/s)');
   for (const n of model.nodes) if (n.kind === 'junction') L.push(` ${id(n.id)} ${f(n.elevationM)} ${f(n.demandM3s * 1000, 6)}`);
   L.push('', '[RESERVOIRS]', ';ID  Head(m)');
   for (const n of model.nodes) {
-    if (n.kind !== 'tank') continue;
+    if (n.kind !== 'tank' || outlets.has(n.id)) continue;
     const head = n.elevationM + n.liquidLevelM + (n.surfacePressurePa - 101325) / (rho * G);
     L.push(` ${id(n.id)} ${f(head)}`);
   }
@@ -302,6 +315,7 @@ export function toInp(project: ProjectUI, title = 'Exported from the pipe networ
   const status: string[] = [];
   const curves: string[] = [];
   for (const e of model.edges) {
+    if (outlets.has(e.id)) continue;
     const ui = byName.get(e.id);
     if (e.kind === 'pipe') {
       const k = e.spec.fittingsK.reduce((s, x) => s + x, 0);
@@ -340,6 +354,10 @@ export function toInp(project: ProjectUI, title = 'Exported from the pipe networ
   L.push('', '[VALVES]', ';ID  Node1  Node2  Diameter(mm)  Type  Setting  MinorLoss', ...valves);
   L.push('', '[STATUS]', ...status);
   L.push('', '[CURVES]', ';ID  Flow(L/s)  Head(m)', ...curves);
+  // outlets: EPANET emitter coefficient in L/s per sqrt(m of water)
+  L.push('', '[EMITTERS]', ';Node  Coefficient(L/s per m^0.5)');
+  for (const n of project.nodes) if (n.kind === 'junction' && n.emitter) L.push(` ${id(n.name)} ${f((emitterKv(n.emitter) / 3.6) / Math.sqrt(1e5 / (999 * G)), 6)}`);
+  if (project.nodes.some((n) => n.fixedPressureKPaG !== undefined)) notes.push('Fixed-pressure nodes are written as reservoirs.');
   L.push('', '[OPTIONS]', ' Units LPS', ` Headloss ${hw ? 'H-W' : 'D-W'}`, ` Specific Gravity ${f(rho / RHO_W, 4)}`, ` Viscosity ${f(model.fluid.dynamicViscosity / rho / 1.022e-6, 4)}`, ' Trials 200', ' Accuracy 0.00001');
   L.push('', '[TIMES]', ' Duration 0');
   const scale = project.scaleMPerPx;

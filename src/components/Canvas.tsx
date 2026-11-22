@@ -464,6 +464,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
           <circle r={11} className="junction" />
         )}
         {n.fitting && <text y={-17} textAnchor="middle" className="t-sub">{fittingTag(n, project)}</text>}
+        {n.kind === 'junction' && (n.fixedPressureKPaG !== undefined || n.emitter) && <text y={n.fitting ? -30 : -17} textAnchor="middle" className="t-sub boundary-tag">{n.emitter ? `outlet K ${n.emitter.k}` : `fixed ${U.fu('pressure', n.fixedPressureKPaG ?? 0, 0)}`}</text>}
         {locked?.has(n.uid) && <text x={n.kind === 'tank' ? 26 : 10} y={-14} className="lock">🔒</text>}
         {opts.labels !== 'none' && <text y={top} textAnchor="middle" className="t-name">{n.name}</text>}
         {opts.labels === 'full' && (

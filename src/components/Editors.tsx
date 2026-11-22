@@ -18,7 +18,8 @@ function NameField({ value, onChange }: { value: string; onChange: (v: string) =
   );
 }
 
-export function NodeEditor({ node, nodes, edges, onChange, onSetFitting }: { node: NodeUI; nodes: NodeUI[]; edges: EdgeUI[]; onChange: (n: NodeUI) => void; onSetFitting: (t: JunctionFittingType | 'none') => void }) {
+export function NodeEditor({ node, nodes, edges, onChange, onSetFitting, outletFlowLps }: { node: NodeUI; nodes: NodeUI[]; edges: EdgeUI[]; onChange: (n: NodeUI) => void; onSetFitting: (t: JunctionFittingType | 'none') => void; outletFlowLps?: number }) {
+  const U = useUnits();
   const isTank = node.kind === 'tank';
   const f = node.fitting;
   const status = f ? fittingStatus(node, nodes, edges.filter((e): e is PipeUI => e.kind === 'pipe')) : undefined;
@@ -40,9 +41,37 @@ export function NodeEditor({ node, nodes, edges, onChange, onSetFitting }: { nod
             <NumField label="Pressure above liquid (abs)" q="pressure" value={node.pressureKPa} onChange={(v) => onChange({ ...node, pressureKPa: v })} />
           </>
         ) : (
-          <NumField label="Demand (withdrawal)" q="flow" value={node.demandLps} onChange={(v) => onChange({ ...node, demandLps: v })} />
+          node.fixedPressureKPaG === undefined && <NumField label="Demand (withdrawal)" q="flow" value={node.demandLps} onChange={(v) => onChange({ ...node, demandLps: v })} />
         )}
       </div>
+      {!isTank && (
+        <div className="grid">
+          <label className="field"><span>Boundary</span>
+            <select aria-label="Boundary" value={node.fixedPressureKPaG !== undefined ? 'pressure' : node.emitter ? 'outlet' : 'none'} onChange={(e) => {
+              const { fixedPressureKPaG: _p, emitter: _e, ...rest } = node;
+              const v = e.target.value;
+              onChange(v === 'pressure' ? { ...rest, fixedPressureKPaG: 200 } : v === 'outlet' ? { ...rest, emitter: { k: 80, unit: 'lpm-bar' } } : rest);
+            }}>
+              <option value="none">None</option>
+              <option value="pressure">Fixed pressure</option>
+              <option value="outlet">Sprinkler / nozzle outlet</option>
+            </select>
+          </label>
+          {node.fixedPressureKPaG !== undefined && <PressureField label="Pressure (gauge)" value={node.fixedPressureKPaG} onChange={(v) => onChange({ ...node, fixedPressureKPaG: v })} />}
+          {node.emitter && (
+            <>
+              <NumField label="K-factor" unit={node.emitter.unit === 'gpm-psi' ? 'gpm/psi½' : 'L/min/bar½'} value={node.emitter.k} onChange={(v) => v > 0 && node.emitter && onChange({ ...node, emitter: { ...node.emitter, k: v } })} />
+              <label className="field"><span>K units</span>
+                <select aria-label="K-factor units" value={node.emitter.unit} onChange={(e) => node.emitter && onChange({ ...node, emitter: { ...node.emitter, unit: e.target.value as 'lpm-bar' | 'gpm-psi' } })}>
+                  <option value="lpm-bar">L/min/bar½</option>
+                  <option value="gpm-psi">gpm/psi½</option>
+                </select>
+              </label>
+              {outletFlowLps !== undefined && <label className="field"><span>Outlet flow</span><input readOnly aria-label="Outlet flow" value={U.fu('flow', outletFlowLps, 2)} /></label>}
+            </>
+          )}
+        </div>
+      )}
       {!isTank && (
         <>
           <div className="grid">
@@ -320,16 +349,20 @@ export function ValveEditor({ valve, from, to, onChange, designFlowLps = 0, dens
       <div className="grid">
         <label className="field">
           <span>Function</span>
-          <select value={valve.controlType} onChange={(e) => onChange({ ...valve, controlType: e.target.value as ValveControlType })}>
+          <select aria-label="Valve function" value={valve.relief && valve.controlType === 'psv' ? 'relief' : valve.controlType} onChange={(e) => {
+            const v = e.target.value;
+            onChange(v === 'relief' ? { ...valve, controlType: 'psv', relief: true, controlValue: valve.controlType === 'psv' ? valve.controlValue : 1000 } : { ...valve, controlType: v as ValveControlType, relief: undefined });
+          }}>
             <option value="none">None</option>
             <option value="prv">Pressure-reducing (PRV)</option>
             <option value="psv">Pressure-sustaining (PSV)</option>
             <option value="fcv">Flow-control (FCV)</option>
+            <option value="relief">Relief valve</option>
           </select>
         </label>
         {valve.controlType === 'fcv' && <NumField label="Set flow" q={controlQ} value={valve.controlValue} onChange={(v) => onChange({ ...valve, controlValue: v })} />}
         {(valve.controlType === 'prv' || valve.controlType === 'psv') && (
-          <PressureField label={valve.controlType === 'prv' ? 'Set pressure, downstream (gauge)' : 'Set pressure, upstream (gauge)'} value={valve.controlValue} onChange={(v) => onChange({ ...valve, controlValue: v })} />
+          <PressureField label={valve.controlType === 'prv' ? 'Set pressure, downstream (gauge)' : valve.relief ? 'Relief set pressure (gauge)' : 'Set pressure, upstream (gauge)'} value={valve.controlValue} onChange={(v) => onChange({ ...valve, controlValue: v })} />
         )}
       </div>
       <h4>{valve.controlType === 'none' ? 'Loss' : 'Loss (fully open)'}</h4>

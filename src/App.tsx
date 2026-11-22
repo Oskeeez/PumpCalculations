@@ -451,7 +451,7 @@ export function App() {
                 <span>🔒 Lock (solver leaves it alone)</span>
               </label>
             )}
-            {selNode && <NodeEditor node={selNode} nodes={project.nodes} edges={project.edges} onChange={edit.updateNode} onSetFitting={(t) => setProject((p) => setJunctionFitting(p, selNode.uid, t))} />}
+            {selNode && <NodeEditor node={selNode} nodes={project.nodes} edges={project.edges} onChange={edit.updateNode} onSetFitting={(t) => setProject((p) => setJunctionFitting(p, selNode.uid, t))} outletFlowLps={selNode.emitter ? (computed.result?.valves.find((v) => v.id === `${selNode.name} outlet`)?.flowM3s ?? 0) * 1000 : undefined} />}
             {selEdge?.kind === 'pipe' && <PipeEditor pipe={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} canvasLengthM={pipeLengthM(project, selEdge)} onChange={edit.updateEdge} frictionMethod={project.frictionMethod} />}
             {selEdge?.kind === 'valve' && (
               <ValveEditor

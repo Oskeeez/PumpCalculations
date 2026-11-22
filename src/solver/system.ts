@@ -349,9 +349,10 @@ export function solveSystem(m: SystemModel, opts: SystemOptions = {}): SystemRes
         else if (c.type === 'prv' && hFrom - set < openLoss(v, Math.max(q, 0)) - TOL_H) next = 'open';
         else if (c.type === 'psv' && set - hTo < openLoss(v, Math.max(q, 0)) - TOL_H) next = 'open';
         else if (c.type === 'fcv' && hFrom - hTo < openLoss(v, c.flowM3s) - TOL_H) next = 'open';
-      } else if (hFrom - hTo > TOL_H && !(c.type === 'prv' && hTo >= set - TOL_H)) {
+      } else if (hFrom - hTo > TOL_H && !(c.type === 'prv' && hTo >= set - TOL_H) && !(c.type === 'psv' && hFrom <= set + TOL_H)) {
         // Closed (reverse flow was blocked): try again once forward flow is possible. A PRV additionally stays
-        // closed while the downstream head is above its set head (e.g. an unregulated bypass overfeeds that side).
+        // closed while the downstream head is above its set head (e.g. an unregulated bypass overfeeds that side),
+        // and a PSV (or relief valve) while the upstream head cannot reach its set head.
         next = 'open';
       }
       if (next !== st) {
@@ -406,7 +407,7 @@ export function solveSystem(m: SystemModel, opts: SystemOptions = {}): SystemRes
       else if (regStatus === 'active') st = 'active';
       else if (e.spec.checkValve && h2 - h1 > 1e-6 && q < 1e-6) st = 'check-closed';
       const c = e.spec.control;
-      if (regStatus === 'closed') w.push(`Valve "${e.id}": regulating valve is closed (reverse flow is blocked).`);
+      if (regStatus === 'closed') w.push(e.spec.control?.type === 'psv' ? `Valve "${e.id}": closed; the upstream pressure is below its set pressure.` : `Valve "${e.id}": regulating valve is closed (reverse flow is blocked).`);
       if (st === 'check-closed') w.push(`Valve "${e.id}": check valve is closed (downstream head exceeds upstream by ${(h2 - h1).toFixed(2)} m); no forward flow.`);
       if (c && c.type !== 'fcv' && isTank.has(c.type === 'prv' ? e.to : e.from)) w.push(`Valve "${e.id}": cannot regulate the head of a tank; it acts as an open valve.`);
       const v = Math.abs(q) / pipeArea(e.spec.diameterM);

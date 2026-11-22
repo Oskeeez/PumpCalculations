@@ -46,7 +46,26 @@ export interface NodeUI {
   demandLps: number;
   /** What the junction is: an elbow, tee, wye, cross or reducer. Plain junction when absent. */
   fitting?: JunctionFitting;
+  /** Junction held at this gauge pressure [kPa] (a pressure boundary, like Fathom's Assigned Pressure). Its demand is then ignored. */
+  fixedPressureKPaG?: number;
+  /** A sprinkler, nozzle or spray outlet discharging to atmosphere: Q = K sqrt(p). */
+  emitter?: Emitter;
 }
+
+/** Outlet K-factor: L/min per sqrt(bar), or US gpm per sqrt(psi). */
+export interface Emitter {
+  k: number;
+  unit: 'lpm-bar' | 'gpm-psi';
+}
+
+/** Kv [m3/h per sqrt(bar)] of an outlet. */
+export function emitterKv(e: Emitter): number {
+  const lpmPerSqrtBar = e.unit === 'gpm-psi' ? e.k * 3.785411784 * Math.sqrt(14.503773773) : e.k;
+  return (lpmPerSqrtBar * 60) / 1000;
+}
+
+/** Names of the elements added for an outlet: the discharge (a check valve with the outlet's Kv) and the atmosphere it discharges to. */
+export const outletNames = (node: string) => ({ valve: `${node} outlet`, sink: `${node} (atmosphere)` });
 
 export interface FittingUI {
   name: string;
@@ -129,6 +148,8 @@ export interface ValveUI {
   /** Discharge coefficient for lossType 'orifice' (default 0.61). */
   orificeCd?: number;
   checkValve: boolean;
+  /** A relief valve: a pressure-sustaining valve that stays shut below its set pressure and relieves above it. */
+  relief?: boolean;
   /** Valve type chosen from the list (gate, globe, ...). The loss K follows it and the size. */
   valveType?: string;
   open: boolean;
@@ -249,6 +270,8 @@ export function uniqueName(base: string, taken: string[]): string {
 }
 
 export const defaultFluid = (): FluidUI => ({ id: 'water', customName: 'Custom fluid', customDensity: 850, customViscosityMPas: 5, customVaporKPa: 1 });
+
+const nameOfUid = (p: HydraulicProject, uid: string) => p.nodes.find((n) => n.uid === uid)?.name;
 
 /** Hazen-Williams C for a new pipe when none is given (new steel or ductile iron). */
 export const DEFAULT_HAZEN_C = 130;
@@ -506,8 +529,17 @@ export function toSystemModel(p: HydraulicProject): SystemModel {
   const nodes: SysNode[] = p.nodes.map((n) =>
     n.kind === 'tank'
       ? { kind: 'tank', id: n.name, elevationM: n.elevationM, liquidLevelM: n.levelM, surfacePressurePa: n.pressureKPa * 1000 }
-      : { kind: 'junction', id: n.name, elevationM: n.elevationM, demandM3s: n.demandLps / 1000 },
+      : n.fixedPressureKPaG !== undefined
+        ? { kind: 'tank', id: n.name, elevationM: n.elevationM, liquidLevelM: 0, surfacePressurePa: P_ATM + n.fixedPressureKPaG * 1000 }
+        : { kind: 'junction', id: n.name, elevationM: n.elevationM, demandM3s: n.demandLps / 1000 },
   );
+  for (const n of p.nodes) {
+    if (n.kind !== 'junction') continue;
+    if (n.fixedPressureKPaG !== undefined && !Number.isFinite(n.fixedPressureKPaG)) throw new Error(`${n.name}: fixed pressure must be a number.`);
+    if (n.emitter && !(n.emitter.k > 0)) throw new Error(`${n.name}: outlet K-factor must be greater than 0.`);
+    if (n.emitter && n.fixedPressureKPaG !== undefined) throw new Error(`${n.name}: a node cannot have a fixed pressure and an outlet.`);
+    if (n.emitter) nodes.push({ kind: 'tank', id: outletNames(n.name).sink, elevationM: n.elevationM, liquidLevelM: 0, surfacePressurePa: P_ATM });
+  }
   for (const n of p.nodes) if (n.kind === 'tank' && !(n.levelM >= 0)) throw new Error(`${n.name}: liquid level must be ≥ 0.`);
   const legLoss = junctionLegLosses(p.nodes, p.edges.filter((e): e is PipeUI => e.kind === 'pipe'));
   const edges: SysEdge[] = p.edges.map((e): SysEdge => {
@@ -567,6 +599,11 @@ export function toSystemModel(p: HydraulicProject): SystemModel {
     });
     return { kind: 'pump', id: e.name, from, to, model, speedRatio: e.speedRatio, running: e.running !== false };
   });
+  for (const n of p.nodes) {
+    if (n.kind !== 'junction' || !n.emitter) continue;
+    const o = outletNames(n.name);
+    edges.push({ kind: 'valve', id: o.valve, from: n.name, to: o.sink, spec: { diameterM: 0.05, loss: { type: 'Kv', kv: emitterKv(n.emitter) }, checkValve: true, open: true } });
+  }
   return { fluid, nodes, edges };
 }
 
@@ -631,6 +668,13 @@ export function compute(p: HydraulicProject): Computed {
       for (const x of result.valves) if (x.velocity > p.maxVelocityMps) alerts.push(`Valve "${x.id}": velocity ${x.velocity.toFixed(2)} m/s exceeds the ${p.maxVelocityMps} m/s limit.`);
     }
     alerts.unshift(...controlNotes);
+    // a relief valve wide open with the pressure still above its setting is too small for the flow
+    for (const e of p.edges) {
+      if (e.kind !== 'valve' || !e.relief || e.controlType !== 'psv') continue;
+      const v = result.valves.find((x) => x.id === e.name);
+      const up = result.nodes.find((n) => n.id === nameOfUid(p, e.from));
+      if (v && up && v.status === 'open' && up.gaugePressurePa / 1000 > e.controlValue * 1.005) alerts.push(`Relief valve "${e.name}" is fully open and the pressure upstream (${(up.gaugePressurePa / 1000).toFixed(0)} kPa) is above its setting (${e.controlValue.toFixed(0)} kPa): it is too small for this flow.`);
+    }
     // pipes with a pressure rating: the highest pressure is at one of the end nodes (or at the lowest end when the pipe falls)
     for (const e of p.edges) {
       if (e.kind !== 'pipe' || !(e.ratingKPaG !== undefined && e.ratingKPaG > 0)) continue;

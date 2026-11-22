@@ -146,3 +146,21 @@ describe('calculation record', () => {
     await s.close();
   });
 });
+
+describe('boundaries', () => {
+  it('makes a junction a sprinkler outlet and a fixed-pressure node, and a valve a relief valve', async () => {
+    const s = await open(app);
+    await s.page.locator('g.node.junction').first().click({ force: true });
+    await s.page.locator('.ws-tab', { hasText: 'Properties' }).first().click();
+    await s.page.getByLabel('Boundary').selectOption('outlet');
+    await expect.poll(() => s.page.getByLabel('Outlet flow').inputValue()).toMatch(/[1-9]/);
+    expect(await s.page.locator('svg.canvas .boundary-tag').count()).toBe(1);
+    await s.page.getByLabel('Boundary').selectOption('pressure');
+    expect(await s.page.locator('svg.canvas .boundary-tag').textContent()).toMatch(/fixed/);
+    await s.page.locator('g.edge.valve .edge-line').first().click({ force: true });
+    await s.page.getByLabel('Valve function').selectOption('relief');
+    expect(await s.page.locator('.side').textContent()).toMatch(/Relief set pressure/);
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+});

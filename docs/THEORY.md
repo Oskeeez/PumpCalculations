@@ -71,6 +71,12 @@ The pump has to overcome the **permanent** loss, which is smaller than the press
 - *FCV (flow-control)*: passes the set flow when the network would pass more, otherwise open.
 - All three block reverse flow. A regulator cannot regulate the head of a tank; it then acts as an open valve (and says so).
 
+## Boundaries and outlets
+
+- **Fixed-pressure node** (Fathom's "assigned pressure"): a junction held at a gauge pressure. It is solved as a fixed head `z + p / (rho g)` and supplies or absorbs whatever flow the network needs; its demand is ignored.
+- **Sprinkler / nozzle outlet**: a junction that discharges to atmosphere with `Q = K sqrt(p)`, K in L/min per sqrt(bar) or gpm per sqrt(psi) (K 80 metric is K 5.6 US). It is solved as a check valve with Kv = 0.06 K into an atmospheric sink at the node's elevation; Kv is defined for water, so for other liquids treat K as an equivalent. The exponent is fixed at 0.5. Checked against an EPANET emitter. EPANET `[EMITTERS]` are read and written.
+- **Relief valve**: a pressure-sustaining valve that stays shut while the upstream pressure is below its setting and opens to hold it there above. Its fully open capacity is its Cv, Kv or K. If it is fully open and the pressure is still above the setting, an alert says it is too small. Accumulation, blowdown and chatter are not modelled: this is a steady-state relieving point, not a relief valve sizing to API 520.
+
 ## Pumps
 
 A pump is fitted at rated speed with a least-squares quadratic through the head points: `H(Q) = a0 + a1 Q + a2 Q^2`. Efficiency and NPSH required (if at least two points are given) are fitted the same way. The fit error is shown. Three or more head points are recommended; the app warns if the pump runs past the end of the head data (the curve is then extrapolated).

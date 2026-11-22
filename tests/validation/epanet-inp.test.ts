@@ -206,3 +206,20 @@ describe('EPANET .inp export', () => {
     expect(t).toMatch(/ 130 /);
   });
 });
+
+describe('EPANET emitters', () => {
+  it('reads [EMITTERS] as outlets and writes them back', () => {
+    const p = parseInp('[JUNCTIONS]\n J 0 0\n[RESERVOIRS]\n R 40\n[PIPES]\n P R J 200 100 0.05 0 Open\n[EMITTERS]\n J 1.5\n[OPTIONS]\n Units LPS\n Headloss D-W\n[END]\n').project;
+    const j = p.nodes.find((n) => n.name === 'J')!;
+    expect(j.emitter?.unit).toBe('lpm-bar');
+    const c = compute(p);
+    // EPANET gives 9.151 L/s for this network (Swamee-Jain); this app should be within 1 %
+    const q = c.result!.valves.find((v) => v.id === 'J outlet')!.flowM3s * 1000;
+    expect(Math.abs(q - 9.1514) / 9.1514).toBeLessThan(0.01);
+    const text = toInp(p).text;
+    expect(text).toMatch(/\[EMITTERS\][\s\S]* J 1\.5\b/);
+    expect(text).not.toMatch(/J_outlet/);
+    const us = parseInp('[JUNCTIONS]\n J 0 0\n[RESERVOIRS]\n R 100\n[PIPES]\n P R J 100 4 120 0 Open\n[EMITTERS]\n J 5.6\n[OPTIONS]\n Units GPM\n[END]\n').project;
+    expect(us.nodes.find((n) => n.name === 'J')!.emitter).toEqual({ k: 5.6, unit: 'gpm-psi' });
+  });
+});
