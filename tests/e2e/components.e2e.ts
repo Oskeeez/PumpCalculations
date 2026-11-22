@@ -125,3 +125,24 @@ describe('plots', () => {
     await s.close();
   });
 });
+
+describe('calculation record', () => {
+  it('issues a revision and shows when the model changes afterwards', async () => {
+    const s = await open(app);
+    await s.page.locator('.ws-tab', { hasText: 'Report' }).first().click();
+    await s.page.getByLabel('Calculation no.').fill('CALC-7');
+    await s.page.getByLabel('Prepared by').fill('A. Engineer');
+    await s.page.getByLabel('Revision description').fill('First issue');
+    await s.page.getByRole('button', { name: 'Issue revision A' }).click();
+    await expect.poll(() => s.page.locator('.report-preview .state').textContent()).toMatch(/As issued at revision A/);
+    expect(await s.page.locator('.report-preview').textContent()).toContain('CALC-7');
+    // change the network
+    await s.page.locator('g.node.junction').first().click({ force: true });
+    await s.page.locator('.ws-tab', { hasText: 'Properties' }).first().click();
+    await s.page.getByLabel('Height (z)').first().fill('3.5');
+    await s.page.locator('.ws-tab', { hasText: 'Report' }).first().click();
+    await expect.poll(() => s.page.locator('.report-preview .state').textContent()).toMatch(/Changed since revision A/);
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+});

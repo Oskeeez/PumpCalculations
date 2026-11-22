@@ -261,7 +261,7 @@ export function App() {
     const s = scenarios.find((x) => x.id === id);
     if (!s) return;
     const snap = JSON.parse(JSON.stringify(s.project)) as Omit<ProjectUI, 'images' | 'scenarios'>;
-    replaceProject({ ...snap, locked: project.locked, images: project.images, scenarios: project.scenarios, targets: project.targets, assumptions: project.assumptions, pumpCurves: project.pumpCurves, drafts }, `Loaded “${s.name}”.`);
+    replaceProject({ ...snap, locked: project.locked, calcRecord: project.calcRecord, images: project.images, scenarios: project.scenarios, targets: project.targets, assumptions: project.assumptions, pumpCurves: project.pumpCurves, drafts }, `Loaded “${s.name}”.`);
   };
   const deleteScenario = (id: string) => setProject((p) => ({ ...p, scenarios: (p.scenarios ?? []).filter((s) => s.id !== id) }));
   const renameScenario = (id: string, name: string) => setProject((p) => ({ ...p, scenarios: (p.scenarios ?? []).map((s) => (s.id === id ? { ...s, name } : s)) }), `scn:${id}`);
@@ -564,7 +564,7 @@ export function App() {
       case 'scenarios':
         return <ScenarioPanel scenarios={scenarios} comparison={comparison ?? runComparison()} onSave={saveScenario} onLoad={loadScenario} onDelete={deleteScenario} onRename={renameScenario} />;
       case 'report':
-        return <ReportPanel project={project} computed={computed} targets={targetStatuses} buildId={typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev'} />;
+        return <ReportPanel project={project} computed={computed} targets={targetStatuses} buildId={typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev'} onRecord={(r) => setProject((p) => ({ ...p, calcRecord: r }), 'record')} />;
       case 'view3d':
         return (
           <Suspense fallback={<p className="hint">Loading 3D view…</p>}>

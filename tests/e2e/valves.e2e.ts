@@ -49,7 +49,7 @@ describe('report', () => {
     const s = await open(app);
     await s.page.getByRole('tab', { name: /^Report/ }).click();
     await s.page.waitForSelector('.report-preview .rp');
-    expect(await s.page.locator('.report-preview h1').textContent()).toBe('Pipe network report');
+    expect(await s.page.locator('.report-preview h1').textContent()).toBe('Pipe network calculation');
     expect(await s.page.locator('.report-preview table').count()).toBeGreaterThan(3);
     expect(await s.page.getByRole('button', { name: /Print/ }).count()).toBe(1);
     expect(s.errors).toEqual([]);
