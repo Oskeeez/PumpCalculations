@@ -15,14 +15,20 @@ import {
   type PipeUI,
   type ProjectUI,
 } from '../model';
-import type { JunctionFittingType } from '../fittings';
+import { VALVE_TYPES, valveTypeK, type JunctionFittingType } from '../fittings';
 import type { Message, SetProject } from './types';
 
 type Point = { x: number; y: number };
 
 /** The ways the user changes the network on the canvas or in the editors. Each one updates the project and the selection. */
-export function useNetworkEditing(project: ProjectUI, setProject: SetProject, selection: Selection, setSelection: (s: Selection) => void, setMessage: (m: Message | undefined) => void, preset: JunctionFittingType | 'none' = 'none') {
+export function useNetworkEditing(project: ProjectUI, setProject: SetProject, selection: Selection, setSelection: (s: Selection) => void, setMessage: (m: Message | undefined) => void, preset: JunctionFittingType | 'none' = 'none', valvePreset = '') {
   const fail = (err: unknown) => setMessage({ kind: 'error', text: err instanceof Error ? err.message : String(err) });
+  /** Gives a newly placed valve the type chosen on the toolbar. */
+  const withValveType = (p: ProjectUI, uid: string): ProjectUI => {
+    const t = VALVE_TYPES.find((v) => v.id === valvePreset);
+    if (!t) return p;
+    return { ...p, edges: p.edges.map((e) => (e.uid === uid && e.kind === 'valve' ? { ...e, valveType: t.id, lossType: 'K' as const, lossValue: valveTypeK(t.id, e.diameterMm) ?? e.lossValue, checkValve: t.check ?? false } : e)) };
+  };
   const selectEdge = (uid: string) => setSelection({ type: 'edge', uid });
   /** Diameter of the pipe at a node, for new valves and orifices that start there. */
   const diameterAt = (nodeUid: string) => (project.edges.find((e) => e.kind === 'pipe' && (e.from === nodeUid || e.to === nodeUid)) as PipeUI | undefined)?.diameterMm ?? 102.26;
@@ -37,13 +43,13 @@ export function useNetworkEditing(project: ProjectUI, setProject: SetProject, se
   };
   const connect = (kind: ConnectKind, from: string, to: string) => {
     const e = makeEdge(kind, from, to, project.edges.map((q) => q.name), diameterAt(from));
-    setProject((p) => ({ ...p, edges: [...p.edges, e] }));
+    setProject((p) => withValveType({ ...p, edges: [...p.edges, e] }, e.uid));
     selectEdge(e.uid);
   };
   const insertInto = (kind: InsertKind, pipeUid: string, x: number, y: number) => {
     try {
       const r = insertOnPipe(project, pipeUid, kind, x, y);
-      setProject(kind === 'junction' && preset !== 'none' ? setJunctionFitting(r.project, r.selectUid, preset) : r.project);
+      setProject(kind === 'junction' && preset !== 'none' ? setJunctionFitting(r.project, r.selectUid, preset) : withValveType(r.project, r.selectUid));
       setSelection({ type: kind === 'junction' || kind === 'tank' ? 'node' : 'edge', uid: r.selectUid });
       setMessage(undefined);
     } catch (err) {
@@ -53,7 +59,7 @@ export function useNetworkEditing(project: ProjectUI, setProject: SetProject, se
   const connectNew = (kind: ConnectKind, from: string, x: number, y: number) => {
     try {
       const r = connectToNewNode(project, kind, from, x, y, diameterAt(from));
-      setProject(r.project);
+      setProject(withValveType(r.project, r.selectUid));
       selectEdge(r.selectUid);
     } catch (err) {
       fail(err);
@@ -62,7 +68,7 @@ export function useNetworkEditing(project: ProjectUI, setProject: SetProject, se
   const connectBlankDrag = (kind: ConnectKind, a: Point, b: Point | { uid: string }) => {
     try {
       const r = connectBlank(project, kind, a, b);
-      setProject(r.project);
+      setProject(withValveType(r.project, r.selectUid));
       selectEdge(r.selectUid);
     } catch (err) {
       fail(err);
@@ -70,7 +76,7 @@ export function useNetworkEditing(project: ProjectUI, setProject: SetProject, se
   };
   const placeAlone = (kind: 'pump' | 'valve' | 'orifice', x: number, y: number) => {
     const r = placeStandalone(project, kind, x, y);
-    setProject(r.project);
+    setProject(withValveType(r.project, r.selectUid));
     selectEdge(r.selectUid);
     setMessage(undefined);
   };

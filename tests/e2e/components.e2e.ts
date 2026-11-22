@@ -22,8 +22,11 @@ describe('fittings and pipe library', () => {
 
   it('chooses the type of junction to place from the toolbar', async () => {
     const s = await open(app);
-    await s.page.getByLabel('Junction type').selectOption('tee');
-    expect(await s.page.getByLabel('Junction type').inputValue()).toBe('tee');
+    await s.page.getByRole('button', { name: 'Junction type' }).click();
+    await s.page.getByRole('menuitemradio', { name: 'Tee' }).click();
+    expect(await s.page.getByRole('button', { name: '● Junction' }).getAttribute('aria-pressed')).toBe('true');
+    await s.page.getByRole('button', { name: 'Junction type' }).click();
+    expect(await s.page.getByRole('menuitemradio', { name: /Tee/ }).getAttribute('aria-checked')).toBe('true');
     expect(s.errors).toEqual([]);
     await s.close();
   });

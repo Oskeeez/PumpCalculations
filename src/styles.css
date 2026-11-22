@@ -455,3 +455,7 @@ body.ws-resizing-row { cursor: row-resize; user-select: none; }
 .profile-chart { width: 100%; height: auto; max-height: 60vh; }
 .pick-row { display: flex; gap: 4px; }
 .pick-row select { flex: 1; }
+
+.tool-menu { display: inline-flex; }
+.tool-menu > button:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.tool-menu .tool-caret { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px; padding-left: 6px; padding-right: 6px; }

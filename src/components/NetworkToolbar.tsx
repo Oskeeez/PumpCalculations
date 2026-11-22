@@ -1,5 +1,5 @@
-import { Fragment, useRef, useState } from 'react';
-import { JUNCTION_FITTING_LABELS, type JunctionFittingType } from '../fittings';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { JUNCTION_FITTING_LABELS, VALVE_TYPES, type JunctionFittingType } from '../fittings';
 import type { ImageLayer } from '../model';
 import type { Tool } from './Canvas';
 
@@ -16,6 +16,8 @@ interface Props {
   tool: Tool;
   junctionPreset: JunctionFittingType | 'none';
   onJunctionPreset: (t: JunctionFittingType | 'none') => void;
+  valvePreset: string;
+  onValvePreset: (id: string) => void;
   onSelectTool: () => void;
   onPickTool: (t: Tool) => void;
   canDelete: boolean;
@@ -46,16 +48,20 @@ export function NetworkToolbar(p: Props) {
   return (
     <div className="toolbar" role="toolbar" aria-label="Network tools">
       <button className={p.tool === 'select' ? 'active' : ''} aria-pressed={p.tool === 'select'} title="Select and move (Esc)" onClick={p.onSelectTool}>↖ Select</button>
-      {TOOLS.map((t) => (
-        <Fragment key={t.id}>
-        <button className={p.tool === t.id ? 'active' : ''} title={t.title} aria-pressed={p.tool === t.id} onClick={() => p.onPickTool(t.id)}>{t.label}</button>
-        {t.id === 'junction' && (
-          <select aria-label="Junction type" value={p.junctionPreset} onChange={(e) => p.onJunctionPreset(e.target.value as JunctionFittingType | 'none')}>
-            {(['none', 'elbow', 'tee', 'wye', 'cross', 'reducer'] as const).map((k) => <option key={k} value={k}>{JUNCTION_FITTING_LABELS[k]}</option>)}
-          </select>
-        )}
-        </Fragment>
-      ))}
+      {TOOLS.map((t) => {
+        const button = (
+          <button className={p.tool === t.id ? 'active' : ''} title={t.title} aria-pressed={p.tool === t.id} onClick={() => p.onPickTool(t.id)}>{t.label}</button>
+        );
+        if (t.id === 'junction') {
+          const options = (['none', 'elbow', 'tee', 'wye', 'cross', 'reducer'] as const).map((k) => ({ value: k as string, label: JUNCTION_FITTING_LABELS[k] }));
+          return <ToolMenu key={t.id} button={button} label="Junction type" value={p.junctionPreset} options={options} onPick={(v) => { p.onJunctionPreset(v as JunctionFittingType | 'none'); p.onPickTool('junction'); }} />;
+        }
+        if (t.id === 'valve') {
+          const options = [{ value: '', label: 'Custom' }, ...VALVE_TYPES.map((v) => ({ value: v.id as string, label: v.label }))];
+          return <ToolMenu key={t.id} button={button} label="Valve type" value={p.valvePreset} options={options} onPick={(v) => { p.onValvePreset(v); p.onPickTool('valve'); }} />;
+        }
+        return <span key={t.id} style={{ display: 'contents' }}>{button}</span>;
+      })}
       <button onClick={p.onDelete} disabled={!p.canDelete}>Delete</button>
       <span className="sep" />
       <input className="find" list="find-items" value={query} placeholder="Find a node or pipe…" aria-label="Find a node or pipe by name" onChange={(e) => find(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { const m = p.findItems.find((i) => i.label.toLowerCase().includes(query.trim().toLowerCase())); if (m && query.trim()) { p.onFind(m.uid); setQuery(''); } } }} />
@@ -75,6 +81,34 @@ export function NetworkToolbar(p: Props) {
         </>
       )}
       <input ref={imageInput} type="file" accept="image/*" hidden onChange={(e) => { p.onAddImageFile(e.target.files?.[0]); e.target.value = ''; }} />
+    </div>
+  );
+}
+
+/** A tool button with a ▾ that opens its type list right underneath it. */
+function ToolMenu({ button, label, value, options, onPick }: { button: ReactNode; label: string; value: string; options: { value: string; label: string }[]; onPick: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', close);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', esc); };
+  }, [open]);
+  const current = options.find((o) => o.value === value)?.label ?? '';
+  return (
+    <div className="menu-wrap tool-menu" ref={wrap}>
+      {button}
+      <button className="tool-caret" aria-haspopup="menu" aria-expanded={open} aria-label={label} title={`${label}: ${current}`} onClick={() => setOpen((o) => !o)}>▾</button>
+      {open && (
+        <div className="ws-menu top" role="menu" aria-label={label}>
+          {options.map((o) => (
+            <button key={o.value} role="menuitemradio" aria-checked={o.value === value} onClick={() => { onPick(o.value); setOpen(false); }}>{o.value === value ? '✓ ' : ''}{o.label}</button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

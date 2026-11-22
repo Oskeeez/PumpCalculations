@@ -91,7 +91,8 @@ export function App() {
   const lib = useCurveLibrary(project, setProject, setMessage);
   const imgs = useImages(project, setProject, setMessage);
   const [junctionPreset, setJunctionPreset] = useState<JunctionFittingType | 'none'>('none');
-  const edit = useNetworkEditing(project, setProject, selection, setSelection, setMessage, junctionPreset);
+  const [valvePreset, setValvePreset] = useState('');
+  const edit = useNetworkEditing(project, setProject, selection, setSelection, setMessage, junctionPreset, valvePreset);
   useAutosave(project, drafts, unitSystem);
 
   // ---- calculation (re-solved only when something hydraulic changes)
@@ -374,6 +375,8 @@ export function App() {
         tool={tool}
         junctionPreset={junctionPreset}
         onJunctionPreset={setJunctionPreset}
+        valvePreset={valvePreset}
+        onValvePreset={setValvePreset}
         onSelectTool={() => toSelect('select')}
         onPickTool={pickTool}
         canDelete={!!selection || multi.size > 0}
