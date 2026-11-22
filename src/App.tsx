@@ -1,89 +1,116 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { loadCriteria, type DesignCriteria } from './ai/criteria';
+import { loadAiSettings, type AiSettings } from './ai/llm';
+import { evaluateTargets } from './ai/targets';
 import { compareScenarios, snapshotScenario, speedRatios, speedSweep } from './analysis';
-import { Canvas, type ConnectKind, type Selection, type Tool } from './components/Canvas';
+import { AiPanel } from './components/AiPanel';
+import { Canvas, type PickAccept, type PickSpec, type Selection, type Tool } from './components/Canvas';
 import { CanvasPanel } from './components/CanvasPanel';
-import { ErrorBoundary } from './components/ErrorBoundary';
+import { DraftsView } from './components/DraftsView';
 import { NodeEditor, PipeEditor, PumpEditor, ValveEditor } from './components/Editors';
-import { NumField } from './components/NumField';
+import { FluidBar } from './components/FluidBar';
+import { DensityContext } from './components/PressureField';
+import { HelpDialog } from './components/HelpDialog';
+import { NetworkToolbar } from './components/NetworkToolbar';
+import { PumpCurvesPanel } from './components/PumpCurvesPanel';
+import { ReportPanel } from './components/ReportPanel';
 import { Results } from './components/Results';
 import { ScenarioPanel } from './components/ScenarioPanel';
 import { SpeedPanel, type SpeedConfig } from './components/SpeedPanel';
-import { EXPORT_THEME, SCREEN_THEME, SI_AXES, pumpChartSvg, svgToPngBase64, CHART_H, CHART_W } from './curveChart';
+import { TargetsPanel } from './components/TargetsPanel';
+import { SolvePanel } from './components/SolvePanel';
+import { parseInp, toInp } from './epanet';
+import { parsePcf } from './pcf';
+import { systemCurve } from './systemCurve';
+import { ProfilePanel } from './components/ProfilePanel';
+import { ValidationPanel } from './components/ValidationPanel';
+import { download } from './download';
+import { PipeLibraryPanel } from './components/PipeLibraryPanel';
+import { FittingLibraryPanel } from './components/FittingLibraryPanel';
+import { SizeForPanel } from './components/SizeForPanel';
+import type { JunctionFittingType } from './fittings';
+import { DEFAULT_SOLVE_SETTINGS, solveForTargets, type SolveOutcome, type SolveSettings } from './autosolve';
+import { usePersistentState } from './state/usePersistentState';
+import { TopBar } from './components/TopBar';
+import { EXPORT_THEME, SCREEN_THEME, SI_AXES, pumpChartSvg, CHART_H, CHART_W } from './curveChart';
+import { copyNodes, moveNodes, pasteClip, removeNodes, type Clip } from './clipboard';
 import { calibrate } from './geometry';
 import { useHistory } from './history';
-import {
-  blankProject,
-  compute,
-  defaultProject,
-  hydraulicKey,
-  newNode,
-  newPipe,
-  newPump,
-  newValve,
-  parseProject,
-  pipeLengthM,
-  serializeProject,
-  syncUidCounter,
-  type EdgeUI,
-  type FluidUI,
-  type ImageLayer,
-  type NodeKind,
-  type NodeUI,
-  type ProjectUI,
-} from './model';
-import { FLUID_LIBRARY, fluidInfo } from './solver';
+import { Workspace } from './layout/Workspace';
+import { activatePanel, groupOfPanel, loadLayout, openPanel, saveLayout, type LayoutNode, type PanelId } from './layout/layout';
+import { blankProject, compute, setJunctionFitting, defaultProject, hydraulicKey, parseProject, pipeLengthM, syncUidCounter, type EdgeUI, type ProjectUI } from './model';
+import { exportWorkbook } from './state/exportWorkbook';
+import { downloadProject, loadInitial, loadUnits, useAutosave } from './state/persistence';
+import type { Message } from './state/types';
+import { useCurveLibrary } from './state/useCurveLibrary';
+import { useDrafts } from './state/useDrafts';
+import { useImages } from './state/useImages';
+import { useNetworkEditing } from './state/useNetworkEditing';
 import { UnitsContext, makeUnits, unitFactor, type UnitSystem } from './units';
 
 const View3D = lazy(() => import('./components/View3D'));
-
-const TOOLS: { id: Exclude<Tool, 'select' | 'scale'>; label: string; title: string }[] = [
-  { id: 'tank', label: '▭ Tank', title: 'Place a tank' },
-  { id: 'junction', label: '● Junction', title: 'Place a junction' },
-  { id: 'pipe', label: '— Pipe', title: 'Drag from node to node' },
-  { id: 'valve', label: '⋈ Valve', title: 'Drag from node to node' },
-  { id: 'pump', label: '◉ Pump', title: 'Drag from suction node to discharge node' },
-];
-
-const STORAGE_KEY = 'pipe-network-autosave-v1';
-const UNITS_KEY = 'pipe-network-units';
-
-function loadInitial(): ProjectUI {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) return parseProject(saved);
-  } catch {
-    /* storage unavailable or corrupt: fall back to the example */
-  }
-  return defaultProject();
-}
-
-function loadUnits(): UnitSystem {
-  try {
-    return localStorage.getItem(UNITS_KEY) === 'us' ? 'us' : 'si';
-  } catch {
-    return 'si';
-  }
-}
+const Coords3D = lazy(() => import('./components/View3D').then((m) => ({ default: m.Coords3D })));
 
 export function App() {
-  const { state: project, set: setProject, undo, redo, canUndo, canRedo } = useHistory<ProjectUI>(loadInitial);
-  const [unitSystem, setUnitSystem] = useState<UnitSystem>(loadUnits);
-  const [view, setView] = useState<'network' | '3d'>('network');
+  const [boot] = useState(loadInitial);
+  const { state: project, set: setProject, undo, redo, canUndo, canRedo } = useHistory<ProjectUI>(() => ({ ...boot, drafts: undefined }));
+  const [message, setMessage] = useState<Message>();
   const [selection, setSelection] = useState<Selection>(null);
   const [tool, setTool] = useState<Tool>('select');
   const [pending, setPending] = useState<string>();
   const [calib, setCalib] = useState<{ x: number; y: number }[]>([]);
-  const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string }>();
+  const [help, setHelp] = useState(false);
+  /** Nodes selected together (shift-click or a box). */
+  const [multi, setMulti] = useState<Set<string>>(new Set());
+  const clip = useRef<Clip | undefined>(undefined);
+  const [focus, setFocus] = useState<{ uid: string; n: number }>();
+  const [epoch, setEpoch] = useState(0); // changes when a different project is loaded: the canvas re-fits
+  const [pick, setPick] = useState<(PickSpec & { id: string; apply: (uid: string) => void }) | null>(null);
+  const [unitSystem, setUnitSystem] = useState<UnitSystem>(loadUnits);
+  const [layout, setLayout] = useState<LayoutNode>(loadLayout);
+  const [aiSettings, setAiSettings] = useState<AiSettings>(loadAiSettings);
+  const [criteria, setCriteria] = useState<DesignCriteria>(loadCriteria);
   const [speedCfg, setSpeedCfg] = useState<SpeedConfig>({ pumpUid: '', minPct: 60, maxPct: 100, stepPct: 10 });
-  const fileInput = useRef<HTMLInputElement>(null);
   const units = useMemo(() => makeUnits(unitSystem), [unitSystem]);
+  const [solveSettings, setSolveSettings] = usePersistentState<SolveSettings>('pipe-network-solve-settings', (saved) => {
+    const d = DEFAULT_SOLVE_SETTINGS as unknown as Record<string, unknown>;
+    const s = (saved && typeof saved === 'object' ? saved : {}) as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(d)) {
+      const dv = d[k];
+      const sv = s[k];
+      out[k] = dv && typeof dv === 'object' ? { ...(dv as object), ...(sv && typeof sv === 'object' ? (sv as object) : {}) } : typeof sv === typeof dv ? sv : dv;
+    }
+    return out as unknown as SolveSettings;
+  });
+  const [solveOutcome, setSolveOutcome] = useState<{ outcome: SolveOutcome; key: string }>();
+  const [solveRun, setSolveRun] = useState<{ solves: number; shortfall: number }>();
+  const solveCancel = useRef(false);
 
+  const { drafts, setDrafts, draftTab, setDraftTab, acceptDraft, discardDraft } = useDrafts(boot.drafts ?? [], project, setProject, setMessage);
+  const lib = useCurveLibrary(project, setProject, setMessage);
+  const imgs = useImages(project, setProject, setMessage);
+  const [junctionPreset, setJunctionPreset] = useState<JunctionFittingType | 'none'>('none');
+  const edit = useNetworkEditing(project, setProject, selection, setSelection, setMessage, junctionPreset);
+  useAutosave(project, drafts, unitSystem);
+
+  // ---- calculation (re-solved only when something hydraulic changes)
   const key = hydraulicKey(project);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const computed = useMemo(() => compute(project), [key]);
 
   // pump curve chart (screen: selected unit system; Excel export: always SI to match the sheets)
-  const chartSeries = computed.pumpCurves.map((c) => ({ name: c.name, pts: c.pts, op: c.op }));
+  const pumpChartOpen = groupOfPanel(layout, 'pumpchart')?.active === 'pumpchart';
+  // the system curve each pump sees (each point is a network solution, so only while the chart is on screen)
+  const systemCurves = useMemo(
+    () =>
+      pumpChartOpen && computed.model && computed.result?.converged && project.edges.length <= 400
+        ? computed.pumpCurves.slice(0, 4).map((c) => ({ name: `${c.name} system`, pts: systemCurve(computed.model!, computed.result, c.name, Math.max(...c.pts.map((x) => x.q)), 16), dashed: true }))
+        : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [computed, pumpChartOpen],
+  );
+  const chartSeries = [...computed.pumpCurves.map((c) => ({ name: c.name, pts: c.pts, op: c.op })), ...systemCurves.filter((s) => s.pts.length > 1)];
   const axes = useMemo(
     () => ({ flowLabel: units.u('flow'), headLabel: units.u('head'), flowFactor: unitFactor('flow', unitSystem), headFactor: unitFactor('head', unitSystem) }),
     [units, unitSystem],
@@ -91,51 +118,45 @@ export function App() {
   const chart = useMemo(
     () => (chartSeries.length ? { screen: pumpChartSvg(chartSeries, SCREEN_THEME, axes), exportSvg: pumpChartSvg(chartSeries, EXPORT_THEME, SI_AXES) } : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [computed, axes],
+    [computed, axes, systemCurves],
   );
 
-  // speed analysis
+  /** True when a panel is the visible tab of its tile. Heavy secondary calculations only run for panels that can be seen. */
+  const visible = (id: PanelId) => groupOfPanel(layout, id)?.active === id;
+  const speedVisible = visible('speed');
+  const scenariosVisible = visible('scenarios');
+
   const pumpEdges = project.edges.filter((e): e is Extract<EdgeUI, { kind: 'pump' }> => e.kind === 'pump');
   const speedPumpUid = pumpEdges.some((p) => p.uid === speedCfg.pumpUid) ? speedCfg.pumpUid : (pumpEdges[0]?.uid ?? '');
+  const runSweep = () => (speedPumpUid ? speedSweep(project, speedPumpUid, speedRatios(speedCfg.minPct, speedCfg.maxPct, speedCfg.stepPct)) : undefined);
   const sweep = useMemo(
-    () => (speedPumpUid ? speedSweep(project, speedPumpUid, speedRatios(speedCfg.minPct, speedCfg.maxPct, speedCfg.stepPct)) : undefined),
+    () => (speedVisible ? runSweep() : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [key, speedPumpUid, speedCfg.minPct, speedCfg.maxPct, speedCfg.stepPct],
+    [speedVisible, key, speedPumpUid, speedCfg.minPct, speedCfg.maxPct, speedCfg.stepPct],
   );
 
-  // scenarios
   const scenarios = project.scenarios ?? [];
   const scenarioKey = JSON.stringify(scenarios);
+  const runComparison = () => compareScenarios([{ name: 'Current', computed }, ...scenarios.map((s) => ({ name: s.name, computed: compute(s.project) }))]);
   const comparison = useMemo(
-    () => compareScenarios([{ name: 'Current', computed }, ...scenarios.map((s) => ({ name: s.name, computed: compute(s.project) }))]),
+    () => (scenariosVisible ? runComparison() : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [computed, scenarioKey],
+    [scenariosVisible, computed, scenarioKey],
   );
 
-  // Autosave (debounced). Failures (private mode, quota) are ignored: saving to a file still works.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      try {
-        localStorage.setItem(STORAGE_KEY, serializeProject(project));
-      } catch {
-        /* ignore */
-      }
-    }, 500);
-    return () => clearTimeout(t);
-  }, [project]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(UNITS_KEY, unitSystem);
-    } catch {
-      /* ignore */
-    }
-  }, [unitSystem]);
+  const targets = project.targets ?? [];
+  const targetStatuses = useMemo(
+    () => evaluateTargets(project, targets, computed),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [computed, project.targets, project.nodes, project.edges],
+  );
 
+  // ---- tools and modes
   const nodeName = (uid: string) => project.nodes.find((n) => n.uid === uid)?.name ?? '?';
-
   /** Tool buttons toggle: pressing the active one returns to select mode. */
   const pickTool = (t: Tool) => {
     setTool((cur) => (cur === t ? 'select' : t));
+    imgs.setAdjustImageId(undefined);
     setPending(undefined);
     setCalib([]);
   };
@@ -144,27 +165,11 @@ export function App() {
     setPending(undefined);
     if (t !== 'scale') setCalib([]);
   };
-
-  const addNode = (kind: NodeKind, x: number, y: number) => {
-    const n = newNode(kind, x, y, project.nodes.map((q) => q.name));
-    setProject((p) => ({ ...p, nodes: [...p.nodes, n] }));
-    setSelection({ type: 'node', uid: n.uid });
+  const toggleAdjust = () => {
+    setTool('select');
+    setPending(undefined);
+    imgs.setAdjustImageId((cur) => (cur ? undefined : imgs.adjustTarget?.id));
   };
-  const connect = (kind: ConnectKind, from: string, to: string) => {
-    const taken = project.edges.map((e) => e.name);
-    const e = kind === 'pipe' ? newPipe(from, to, taken) : kind === 'pump' ? newPump(from, to, taken) : newValve(from, to, taken);
-    setProject((p) => ({ ...p, edges: [...p.edges, e] }));
-    setSelection({ type: 'edge', uid: e.uid });
-  };
-  const moveNode = (uid: string, x: number, y: number) => setProject((p) => ({ ...p, nodes: p.nodes.map((n) => (n.uid === uid ? { ...n, x, y } : n)) }), `drag:${uid}`);
-  const updateNode = (n: NodeUI) => setProject((p) => ({ ...p, nodes: p.nodes.map((q) => (q.uid === n.uid ? n : q)) }), `node:${n.uid}`);
-  const updateEdge = (e: EdgeUI) => setProject((p) => ({ ...p, edges: p.edges.map((q) => (q.uid === e.uid ? e : q)) }), `edge:${e.uid}`);
-  const updateFluid = (patch: Partial<FluidUI>) => setProject((p) => ({ ...p, fluid: { ...p.fluid, ...patch } }), 'fluid');
-
-  // canvas, scale, images
-  const addImage = (layer: ImageLayer) => setProject((p) => ({ ...p, images: [...p.images, layer] }));
-  const updateImage = (id: string, patch: Partial<ImageLayer>) => setProject((p) => ({ ...p, images: p.images.map((im) => (im.id === id ? { ...im, ...patch } : im)) }), `img:${id}`);
-  const deleteImage = (id: string) => setProject((p) => ({ ...p, images: p.images.filter((im) => im.id !== id) }));
   const applyCalib = (real: number) => {
     const s = calib.length === 2 ? calibrate(calib[0], calib[1], real) : undefined;
     if (s) setProject((p) => ({ ...p, scaleMPerPx: s }));
@@ -172,78 +177,139 @@ export function App() {
     setCalib([]);
     setTool('select');
   };
-
-  const deleteSelected = () => {
-    if (!selection) return;
-    setProject((p) =>
-      selection.type === 'node'
-        ? { ...p, nodes: p.nodes.filter((n) => n.uid !== selection.uid), edges: p.edges.filter((e) => e.from !== selection.uid && e.to !== selection.uid) }
-        : { ...p, edges: p.edges.filter((e) => e.uid !== selection.uid) },
-    );
-    setSelection(null);
+  const showPanel = (id: PanelId) => setLayout((l) => openPanel(l, id));
+  /** A selector in another panel asks the user to click a node / pump / line on the network. */
+  const startPick = (id: string, accept: PickAccept, label: string, apply: (uid: string) => void) => {
+    if (pick?.id === id) return setPick(null); // pressing the active button again cancels
+    setTool('select');
+    setPending(undefined);
+    imgs.setAdjustImageId(undefined);
+    setPick({ id, accept, label, apply });
+    showPanel('network');
   };
 
+  /** Delete: a group of selected nodes, or the single selection. */
+  const deleteSelection = () => {
+    if (multi.size > 0) {
+      setProject((p) => removeNodes(p, multi));
+      setMulti(new Set());
+      setSelection(null);
+    } else edit.deleteSelected();
+  };
+  const copySelection = () => {
+    const ids = multi.size > 0 ? multi : selection?.type === 'node' ? new Set([selection.uid]) : new Set<string>();
+    const c = copyNodes(project, ids);
+    if (!c) return false;
+    clip.current = c;
+    setMessage({ kind: 'info', text: `Copied ${c.nodes.length} node${c.nodes.length === 1 ? '' : 's'} and ${c.edges.length} pipe, valve or pump${c.edges.length === 1 ? '' : 's'}. Press Ctrl+V to paste.` });
+    return true;
+  };
+  const pasteSelection = () => {
+    if (!clip.current) return false;
+    const r = pasteClip(project, clip.current);
+    syncUidCounter(r.project);
+    setProject(r.project);
+    setMulti(new Set(r.newNodeUids));
+    setSelection(null);
+    return true;
+  };
+
+  // ---- whole-project actions
   const replaceProject = (p: ProjectUI, text?: string) => {
+    setMulti(new Set());
+    setEpoch((n) => n + 1);
+    setPick(null);
     syncUidCounter(p);
-    setProject(p);
+    setDrafts(p.drafts ?? []);
+    setDraftTab('compare');
+    setProject({ ...p, drafts: undefined });
     setSelection(null);
     setPending(undefined);
     setCalib([]);
     setTool('select');
     setMessage(text ? { kind: 'info', text } : undefined);
   };
+  const openFile = async (file: File) => {
+    try {
+      const text = await file.text();
+      if (/\.inp$/i.test(file.name)) {
+        const r = parseInp(text);
+        replaceProject(r.project, `Imported ${file.name}: ${r.project.nodes.length} nodes, ${r.project.edges.length} links.${r.notes.length ? ' ' + r.notes.join(' ') : ''}`);
+      } else if (/\.pcf$/i.test(file.name)) {
+        const r = parsePcf(text);
+        replaceProject(r.project, `Imported ${file.name}: ${r.project.nodes.length} nodes, ${r.project.edges.length} components. ${r.notes.join(' ')}`);
+      } else {
+        replaceProject(parseProject(text), `Opened ${file.name}.`);
+      }
+    } catch (err) {
+      setMessage({ kind: 'error', text: `Could not open ${file.name}: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  };
+  const canExport = !!computed.result && computed.result.converged && !!computed.model;
+  const exportXlsx = async () => {
+    setMessage(undefined);
+    try {
+      // panels that are not on screen do not keep their results up to date, so work them out now
+      await exportWorkbook({ project, computed, chartSvg: chart?.exportSvg, sweep: sweep ?? runSweep(), comparison: scenarios.length ? (comparison ?? runComparison()) : undefined, targets: targetStatuses });
+    } catch (err) {
+      setMessage({ kind: 'error', text: `Export failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  };
 
-  // scenario actions
+  // scenarios
   const saveScenario = (name: string) => setProject((p) => ({ ...p, scenarios: [...(p.scenarios ?? []), snapshotScenario(p, name || `Scenario ${(p.scenarios?.length ?? 0) + 1}`)] }));
   const loadScenario = (id: string) => {
     const s = scenarios.find((x) => x.id === id);
     if (!s) return;
     const snap = JSON.parse(JSON.stringify(s.project)) as Omit<ProjectUI, 'images' | 'scenarios'>;
-    replaceProject({ ...snap, images: project.images, scenarios: project.scenarios }, `Loaded “${s.name}”.`);
+    replaceProject({ ...snap, locked: project.locked, calcRecord: project.calcRecord, images: project.images, scenarios: project.scenarios, targets: project.targets, assumptions: project.assumptions, pumpCurves: project.pumpCurves, drafts }, `Loaded “${s.name}”.`);
   };
   const deleteScenario = (id: string) => setProject((p) => ({ ...p, scenarios: (p.scenarios ?? []).filter((s) => s.id !== id) }));
   const renameScenario = (id: string, name: string) => setProject((p) => ({ ...p, scenarios: (p.scenarios ?? []).map((s) => (s.id === id ? { ...s, name } : s)) }), `scn:${id}`);
 
-  const saveFile = () => {
-    const url = URL.createObjectURL(new Blob([serializeProject(project)], { type: 'application/json' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'pipe-network.json';
-    a.click();
-    URL.revokeObjectURL(url);
+  // ---- keyboard
+  // One keyboard listener for the life of the app. It calls the latest handler through a ref, so it is never removed and re-added
+  // in the middle of a key event (which would make the browser skip other listeners for that event).
+  const onKeyRef = useRef<(ev: KeyboardEvent) => void>(() => undefined);
+  onKeyRef.current = (ev: KeyboardEvent) => {
+    const tag = (ev.target as HTMLElement | null)?.tagName;
+    const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    const mod = ev.ctrlKey || ev.metaKey;
+    if (mod && !typing && ev.key.toLowerCase() === 'z') {
+      ev.preventDefault();
+      ev.shiftKey ? redo() : undo();
+    } else if (mod && !typing && ev.key.toLowerCase() === 'y') {
+      ev.preventDefault();
+      redo();
+    } else if (mod && !typing && ev.key.toLowerCase() === 'c') {
+      if (copySelection()) ev.preventDefault();
+    } else if (mod && !typing && ev.key.toLowerCase() === 'v') {
+      if (pasteSelection()) ev.preventDefault();
+    } else if (typing) return;
+    else if (ev.key === '?') setHelp((h) => !h);
+    else if (ev.key === 'Escape') {
+      setPick(null);
+      imgs.setAdjustImageId(undefined);
+      setPending(undefined);
+      setCalib([]);
+      setMulti(new Set());
+      setTool('select');
+    } else if (ev.key === 'Delete' || ev.key === 'Backspace') deleteSelection();
   };
-  const openFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    try {
-      replaceProject(parseProject(await file.text()), `Opened ${file.name}.`);
-    } catch (err) {
-      setMessage({ kind: 'error', text: `Could not open ${file.name}: ${err instanceof Error ? err.message : String(err)}` });
-    }
-  };
-
   useEffect(() => {
-    const onKey = (ev: KeyboardEvent) => {
-      const tag = (ev.target as HTMLElement | null)?.tagName;
-      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-      const mod = ev.ctrlKey || ev.metaKey;
-      if (mod && !typing && ev.key.toLowerCase() === 'z') {
-        ev.preventDefault();
-        ev.shiftKey ? redo() : undo();
-      } else if (mod && !typing && ev.key.toLowerCase() === 'y') {
-        ev.preventDefault();
-        redo();
-      } else if (typing) return;
-      else if (ev.key === 'Escape') {
-        setPending(undefined);
-        setCalib([]);
-        setTool('select');
-      } else if (ev.key === 'Delete' || ev.key === 'Backspace') deleteSelected();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  });
+    const listener = (ev: KeyboardEvent) => onKeyRef.current(ev);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, []);
+
+  // ---- layout persistence; selecting something brings the Properties tab forward (if it is open)
+  useEffect(() => {
+    const t = setTimeout(() => saveLayout(layout), 300);
+    return () => clearTimeout(t);
+  }, [layout]);
+  useEffect(() => {
+    if (selection) setLayout((l) => activatePanel(l, 'properties'));
+  }, [selection]);
 
   const selectByName = (name: string) => {
     const n = project.nodes.find((q) => q.name === name);
@@ -252,181 +318,330 @@ export function App() {
     if (e) setSelection({ type: 'edge', uid: e.uid });
   };
 
-  const canExport = !!computed.result && computed.result.converged && !!computed.model;
-  const exportXlsx = async () => {
-    if (!canExport || !computed.model || !computed.result) return;
-    setMessage(undefined);
+  const selNode = selection?.type === 'node' ? project.nodes.find((n) => n.uid === selection.uid) : undefined;
+  const selEdge = selection?.type === 'edge' ? project.edges.find((e) => e.uid === selection.uid) : undefined;
+  // solve for me
+  const lockedSet = useMemo(() => new Set(project.locked ?? []), [project.locked]);
+  const toggleLock = (uid: string) => setProject((p) => {
+    const cur = new Set(p.locked ?? []);
+    if (cur.has(uid)) cur.delete(uid); else cur.add(uid);
+    return { ...p, locked: [...cur] };
+  }, `lock:${uid}`);
+  const runSolve = async () => {
+    if (solveRun) return;
+    solveCancel.current = false;
+    setSolveRun({ solves: 0, shortfall: 0 });
+    setSolveOutcome(undefined);
+    const startKey = key;
     try {
-      const png = chart ? await svgToPngBase64(chart.exportSvg) : undefined;
-      const speedPng = sweep && sweep.series.length ? await svgToPngBase64(pumpChartSvg(sweep.series, EXPORT_THEME, SI_AXES)) : undefined;
-      const { buildNetworkWorkbook, workbookToBuffer } = await import('./excel/networkExport'); // lazy: keeps ExcelJS out of first load
-      const wb = await buildNetworkWorkbook({
-        model: computed.model,
-        result: computed.result,
-        npshMarginM: project.npshMarginM,
-        pumpCurves: computed.pumpCurves,
-        chartPngBase64: png,
-        speedChartPngBase64: speedPng,
-        speedSweep: sweep && sweep.rows.some((r) => !r.error) ? sweep : undefined,
-        comparison: scenarios.length ? comparison : undefined,
+      const outcome = await solveForTargets(project, targets, solveSettings, lockedSet, {
+        onProgress: (i) => setSolveRun(i),
+        shouldCancel: () => solveCancel.current,
       });
-      const buf = await workbookToBuffer(wb);
-      const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'pipe-network.xlsx';
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      setMessage({ kind: 'error', text: `Export failed: ${err instanceof Error ? err.message : String(err)}` });
+      setSolveOutcome({ outcome, key: startKey });
+    } catch (e) {
+      setMessage({ kind: 'error', text: `Solve failed: ${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      setSolveRun(undefined);
+    }
+  };
+  const applySolve = () => {
+    if (!solveOutcome || solveOutcome.key !== key) return;
+    const next = solveOutcome.outcome.project;
+    setProject({ ...next, locked: project.locked });
+    setMessage({ kind: 'info', text: `Applied ${solveOutcome.outcome.changes.length} change${solveOutcome.outcome.changes.length === 1 ? '' : 's'}.` });
+    setSolveOutcome(undefined);
+  };
+  const solveHighlight = useMemo(() => {
+    const m = new Map<string, 'added' | 'modified'>();
+    if (solveOutcome && solveOutcome.key === key) for (const c of solveOutcome.outcome.changes) m.set(c.uid, 'modified');
+    return m.size ? m : undefined;
+  }, [solveOutcome, key]);
+
+  const pumpFit = selEdge?.kind === 'pump' ? computed.pumpCurves.find((c) => c.name === selEdge.name)?.headFitRmse : undefined;
+  const hasSide = !!(selNode || selEdge);
+
+  const failing = targetStatuses.filter((x) => !x.pass).length;
+  const badge = (id: PanelId): string | undefined =>
+    id === 'targets' ? (targets.length ? `(${targets.length}${failing ? `, ${failing} failing` : ''})` : undefined)
+    : id === 'drafts' ? `(${drafts.filter((d) => d.status !== 'discarded').length})`
+    : id === 'pumpcurves' ? (lib.curves.length ? `(${lib.curves.length})` : undefined)
+    : undefined;
+
+  const networkPanel = (
+    <div className="net-panel">
+      <NetworkToolbar
+        tool={tool}
+        junctionPreset={junctionPreset}
+        onJunctionPreset={setJunctionPreset}
+        onSelectTool={() => toSelect('select')}
+        onPickTool={pickTool}
+        canDelete={!!selection || multi.size > 0}
+        onDelete={deleteSelection}
+        images={project.images}
+        adjustId={imgs.adjustImageId}
+        adjustTargetId={imgs.adjustTarget?.id}
+        onAdjustPick={imgs.setAdjustPick}
+        onToggleAdjust={toggleAdjust}
+        onAddImageFile={(f) => void imgs.addImageFile(f)}
+        findItems={[...project.nodes.map((n) => ({ uid: n.uid, label: n.name })), ...project.edges.map((e) => ({ uid: e.uid, label: e.name }))]}
+        onFind={(uid) => {
+          setSelection(project.nodes.some((n) => n.uid === uid) ? { type: 'node', uid } : { type: 'edge', uid });
+          setFocus((f) => ({ uid, n: (f?.n ?? 0) + 1 }));
+        }}
+      />
+      <Canvas
+        project={project}
+        result={computed.result}
+        selection={selection}
+        tool={tool}
+        pending={pending}
+        calib={calib}
+        onSelect={setSelection}
+        onTool={toSelect}
+        onAddNode={edit.addNode}
+        onMoveNode={edit.moveNode}
+        multi={multi}
+        onMulti={setMulti}
+        onMoveNodes={(m) => setProject((p) => moveNodes(p, m), 'drag:group')}
+        onMoveImage={(id, x, y) => imgs.updateImage(id, { x, y })}
+        onConnect={edit.connect}
+        onInsert={edit.insertInto}
+        onPlace={edit.placeAlone}
+        onConnectNew={edit.connectNew}
+        onConnectBlank={edit.connectBlankDrag}
+        onReverse={edit.reverseEdge}
+        adjustImageId={imgs.adjustImageId}
+        onZoomImage={imgs.zoomImage}
+        onAdjustDone={() => imgs.setAdjustImageId(undefined)}
+        onPending={setPending}
+        onCalibPoint={(p) => setCalib((c) => (c.length >= 2 ? [p] : [...c, p]))}
+        fitKey={epoch}
+        focus={focus}
+        pick={pick ?? undefined}
+        locked={lockedSet}
+        highlight={solveHighlight}
+        onPick={(uid) => { const back = pick?.id.startsWith('speed') ? 'speed' : pick?.id.startsWith('profile') ? 'profile' : pick?.id.startsWith('pumpctl') ? 'properties' : 'targets'; pick?.apply(uid); setPick(null); setLayout((l) => activatePanel(l, back)); }}
+        onPickCancel={() => setPick(null)}
+      />
+    </div>
+  );
+
+  const renderPanel = (id: PanelId): ReactNode => {
+    switch (id) {
+      case 'network':
+        return networkPanel;
+      case 'properties':
+        return (
+          <div className="side">
+            {multi.size > 1 && (
+              <section className="editor">
+                <h3>{multi.size} nodes selected</h3>
+                <p className="hint">Drag to move, Delete to remove, Ctrl+C / Ctrl+V to copy.</p>
+              </section>
+            )}
+            {!hasSide && multi.size <= 1 && (
+              <section className="editor empty-side">
+                <h3>Properties</h3>
+                <p className="hint">Nothing selected.</p>
+              </section>
+            )}
+            {(selNode || selEdge) && (
+              <label className="lock-toggle" title="Solve for me leaves this alone">
+                <input type="checkbox" checked={lockedSet.has((selNode ?? selEdge)!.uid)} onChange={() => toggleLock((selNode ?? selEdge)!.uid)} />
+                <span>🔒 Lock (solver leaves it alone)</span>
+              </label>
+            )}
+            {selNode && <NodeEditor node={selNode} nodes={project.nodes} edges={project.edges} onChange={edit.updateNode} onSetFitting={(t) => setProject((p) => setJunctionFitting(p, selNode.uid, t))} outletFlowLps={selNode.emitter ? (computed.result?.valves.find((v) => v.id === `${selNode.name} outlet`)?.flowM3s ?? 0) * 1000 : undefined} />}
+            {selEdge?.kind === 'pipe' && <PipeEditor pipe={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} canvasLengthM={pipeLengthM(project, selEdge)} onChange={edit.updateEdge} frictionMethod={project.frictionMethod} />}
+            {selEdge?.kind === 'valve' && (
+              <ValveEditor
+                valve={selEdge}
+                from={nodeName(selEdge.from)}
+                to={nodeName(selEdge.to)}
+                onChange={edit.updateEdge}
+                designFlowLps={Math.abs(computed.result?.valves.find((x) => x.id === selEdge.name)?.flowM3s ?? 0) * 1000}
+                density={computed.model?.fluid.density}
+              />
+            )}
+            {selEdge?.kind === 'pump' && (
+              <PumpEditor
+                pump={selEdge}
+                from={nodeName(selEdge.from)}
+                to={nodeName(selEdge.to)}
+                onChange={edit.updateEdge}
+                headFitRmse={pumpFit}
+                curves={lib.curves}
+                onAssignCurve={(cid) => lib.assignCurve(selEdge.uid, cid)}
+                onSaveCurve={() => lib.saveCurveFromPump(selEdge)}
+                onManageCurves={() => { lib.setCurveFocus(selEdge.curveId); showPanel('pumpcurves'); }}
+                nodes={project.nodes.map((n) => ({ uid: n.uid, name: n.name }))}
+                onPickNode={(apply) => startPick(`pumpctl:${selEdge.uid}`, 'node', `${selEdge.name} control node`, apply)}
+                pickActive={pick?.id === `pumpctl:${selEdge.uid}`}
+                solvedSpeed={computed.result?.pumps.find((x) => x.id === selEdge.name)?.speedRatio}
+              />
+            )}
+            {selEdge && (
+              <SizeForPanel
+                key={selEdge.uid}
+                project={project}
+                edge={selEdge}
+                locked={lockedSet}
+                flowLps={Math.abs(computed.result?.pipes.find((x) => x.id === selEdge.name)?.flowM3s ?? 0) * 1000}
+                fluid={computed.model?.fluid}
+                onApply={(next, text) => { setProject({ ...next, locked: project.locked }); setMessage({ kind: 'info', text: `Applied: ${text}.` }); }}
+              />
+            )}
+          </div>
+        );
+      case 'solve':
+        return (
+          <SolvePanel
+            project={project}
+            statuses={targetStatuses}
+            settings={solveSettings}
+            onSettings={setSolveSettings}
+            locked={lockedSet}
+            onToggleLock={toggleLock}
+            onUnlockAll={() => setProject((p) => ({ ...p, locked: [] }), 'lock:all')}
+            running={solveRun}
+            onRun={() => void runSolve()}
+            onCancel={() => { solveCancel.current = true; }}
+            outcome={solveOutcome?.outcome}
+            stale={!!solveOutcome && solveOutcome.key !== key}
+            onApply={applySolve}
+            onDiscard={() => setSolveOutcome(undefined)}
+            onShowTargets={() => showPanel('targets')}
+          />
+        );
+      case 'fittinglib':
+        return <FittingLibraryPanel />;
+      case 'validation':
+        return <ValidationPanel buildId={typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev'} />;
+      case 'pipelib':
+        return <PipeLibraryPanel />;
+      case 'pumpcurves':
+        return <PumpCurvesPanel curves={lib.curves} pumps={pumpEdges} selectedPump={selEdge?.kind === 'pump' ? selEdge : undefined} focusId={lib.curveFocus} onChange={lib.updateCurves} onUse={lib.assignCurve} />;
+      case 'results':
+        return <Results computed={computed} onSelectName={selectByName} />;
+      case 'profile':
+        return <ProfilePanel project={project} result={computed.result} pickId={pick?.id} onPick={startPick} />;
+      case 'pumpchart':
+        return chart ? <div className="chart" style={{ aspectRatio: `${CHART_W} / ${CHART_H}` }} dangerouslySetInnerHTML={{ __html: chart.screen }} /> : <p className="hint">No pump.</p>;
+      case 'targets':
+        return (
+          <>
+            <TargetsPanel project={project} targets={targets} statuses={targetStatuses} onChange={(t) => setProject((p) => ({ ...p, targets: t }), 'targets')} pickId={pick?.id} onPick={startPick} onSolve={() => showPanel('solve')} />
+            {(project.assumptions ?? []).length > 0 && (
+              <>
+                <h4>Assumptions from AI-built parts ({project.assumptions!.length})</h4>
+                <ul className="status-list">{project.assumptions!.map((a) => <li key={a.id}><b>{a.category}:</b> {a.text}</li>)}</ul>
+              </>
+            )}
+          </>
+        );
+      case 'scale':
+        return (
+          <CanvasPanel
+            scaleMPerPx={project.scaleMPerPx}
+            canvasW={project.canvasW}
+            canvasH={project.canvasH}
+            images={project.images}
+            calib={calib}
+            calibActive={tool === 'scale'}
+            onScale={(s) => setProject((p) => ({ ...p, scaleMPerPx: s }), 'scale')}
+            onCanvasSize={(w, h) => setProject((p) => ({ ...p, canvasW: w, canvasH: h }), 'canvas')}
+            onAddImage={imgs.addImage}
+            onUpdateImage={imgs.updateImage}
+            adjustImageId={imgs.adjustImageId}
+            onAdjust={imgs.setAdjustImageId}
+            onZoom={(iid, f) => { const im = project.images.find((q) => q.id === iid); if (im) imgs.zoomImage(iid, f, im.x + im.width / 2, im.y + im.height / 2); }}
+            onDeleteImage={imgs.deleteImage}
+            onStartCalib={() => { setCalib([]); setPending(undefined); setTool('scale'); }}
+            onApplyCalib={applyCalib}
+            onCancelCalib={() => { setCalib([]); setTool('select'); }}
+          />
+        );
+      case 'speed':
+        return <SpeedPanel pumps={pumpEdges} config={{ ...speedCfg, pumpUid: speedPumpUid }} onConfig={setSpeedCfg} sweep={sweep} pickId={pick?.id} onPick={startPick} />;
+      case 'scenarios':
+        return <ScenarioPanel scenarios={scenarios} comparison={comparison ?? runComparison()} onSave={saveScenario} onLoad={loadScenario} onDelete={deleteScenario} onRename={renameScenario} />;
+      case 'report':
+        return <ReportPanel project={project} computed={computed} targets={targetStatuses} buildId={typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev'} onRecord={(r) => setProject((p) => ({ ...p, calcRecord: r }), 'record')} />;
+      case 'view3d':
+        return (
+          <Suspense fallback={<p className="hint">Loading 3D view…</p>}>
+            <View3D project={project} computed={computed} />
+          </Suspense>
+        );
+      case 'coords3d':
+        return (
+          <Suspense fallback={<p className="hint">Loading…</p>}>
+            <Coords3D project={project} computed={computed} />
+          </Suspense>
+        );
+      case 'ai':
+        return (
+          <AiPanel
+            main={project}
+            drafts={drafts}
+            activeDraftId={draftTab === 'compare' ? undefined : draftTab}
+            settings={aiSettings}
+            onSettings={setAiSettings}
+            criteria={criteria}
+            onCriteria={setCriteria}
+            onDrafts={setDrafts}
+            onShow={(ids) => { setDraftTab(ids.length === 1 ? ids[0] : 'compare'); showPanel('drafts'); }}
+          />
+        );
+      case 'drafts':
+        return <DraftsView main={project} drafts={drafts} criteria={criteria} tab={draftTab} onTab={setDraftTab} onAccept={acceptDraft} onDiscard={discardDraft} />;
     }
   };
 
-  const selNode = selection?.type === 'node' ? project.nodes.find((n) => n.uid === selection.uid) : undefined;
-  const selEdge = selection?.type === 'edge' ? project.edges.find((e) => e.uid === selection.uid) : undefined;
-  const pumpFit = selEdge?.kind === 'pump' ? computed.pumpCurves.find((c) => c.name === selEdge.name)?.headFitRmse : undefined;
-  const info = fluidInfo(project.fluid.id);
-  const isCustom = project.fluid.id === 'custom';
-  const hasSide = !!(selNode || selEdge);
 
   return (
     <UnitsContext.Provider value={unitSystem}>
+      <DensityContext.Provider value={computed.model?.fluid.density ?? 998.2}>
       <div className="app">
-        <header>
-          <h1>Pipe Network Calculator</h1>
-          <button className="primary" disabled={!canExport} onClick={exportXlsx} title="Excel sheets are always in SI units">Export Excel</button>
-        </header>
-
-        <div className="menu" role="toolbar" aria-label="Project">
-          <button onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">↶ Undo</button>
-          <button onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
-          <span className="sep" />
-          <button onClick={() => replaceProject(blankProject())}>New</button>
-          <button onClick={() => replaceProject(defaultProject())}>Example</button>
-          <button onClick={() => fileInput.current?.click()}>Open…</button>
-          <button onClick={saveFile}>Save…</button>
-          <input ref={fileInput} type="file" accept=".json,application/json" hidden onChange={openFile} />
-          <span className="sep" />
-          <span className="seg" role="group" aria-label="Unit system">
-            <button className={unitSystem === 'si' ? 'active' : ''} aria-pressed={unitSystem === 'si'} onClick={() => setUnitSystem('si')}>SI</button>
-            <button className={unitSystem === 'us' ? 'active' : ''} aria-pressed={unitSystem === 'us'} onClick={() => setUnitSystem('us')}>US</button>
-          </span>
-        </div>
-
-        <div className="header-fluid fluidbar">
-          <label className="field wide">
-            <span>Fluid</span>
-            <select value={project.fluid.id} onChange={(e) => updateFluid({ id: e.target.value as FluidUI['id'] })}>
-              {FLUID_LIBRARY.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-            </select>
-          </label>
-          {isCustom ? (
-            <>
-              <label className="field">
-                <span>Name</span>
-                <input value={project.fluid.customName} onChange={(e) => updateFluid({ customName: e.target.value })} />
-              </label>
-              <NumField label="Density" q="density" value={project.fluid.customDensity} onChange={(v) => updateFluid({ customDensity: v })} />
-              <NumField label="Viscosity" q="viscosity" value={project.fluid.customViscosityMPas} onChange={(v) => updateFluid({ customViscosityMPas: v })} />
-              <NumField label="Vapour pressure (abs)" q="pressure" value={project.fluid.customVaporKPa} onChange={(v) => updateFluid({ customVaporKPa: v })} />
-            </>
-          ) : (
-            <NumField label="Temperature" q="temperature" value={project.temperatureC} onChange={(v) => setProject((p) => ({ ...p, temperatureC: v }), 'temp')} title={`${units.f('temperature', info.tMinC, 0)} to ${units.fu('temperature', info.tMaxC, 0)}`} />
-          )}
-          <NumField label="NPSH margin" q="head" value={project.npshMarginM} onChange={(v) => setProject((p) => ({ ...p, npshMarginM: v }), 'npsh')} />
-          <NumField label="Max velocity" q="velocity" value={project.maxVelocityMps} onChange={(v) => setProject((p) => ({ ...p, maxVelocityMps: v }), 'vmax')} title="0 = off" />
-          {computed.model && (
-            <span className="fluid-props">
-              ρ {units.fu('density', computed.model.fluid.density, 1)} · μ {units.fu('viscosity', computed.model.fluid.dynamicViscosity * 1000, 3)} · p<sub>v</sub> {units.fu('pressure', computed.model.fluid.vaporPressure / 1000, 2)}
-            </span>
-          )}
-        </div>
-        {message && <div className={`banner ${message.kind === 'error' ? 'error' : 'ok'}`}>{message.text}</div>}
-
-        <nav className="tabs" aria-label="Page">
-          <button className={view === 'network' ? 'active' : ''} onClick={() => setView('network')}>Network</button>
-          <button className={view === '3d' ? 'active' : ''} onClick={() => setView('3d')}>3D view</button>
-        </nav>
-
-        {view === '3d' ? (
-          <ErrorBoundary title="The 3D view failed">
-            <Suspense fallback={<p className="hint">Loading 3D view…</p>}>
-              <View3D project={project} computed={computed} />
-            </Suspense>
-          </ErrorBoundary>
-        ) : (
-          <>
-            <div className="toolbar" role="toolbar" aria-label="Network tools">
-              {TOOLS.map((t) => (
-                <button key={t.id} className={tool === t.id ? 'active' : ''} title={t.title} aria-pressed={tool === t.id} onClick={() => pickTool(t.id)}>{t.label}</button>
-              ))}
-              <button onClick={deleteSelected} disabled={!selection}>Delete</button>
-            </div>
-
-            <div className={`workspace ${hasSide ? '' : 'no-side'}`}>
-              <Canvas
-                project={project}
-                result={computed.result}
-                selection={selection}
-                tool={tool}
-                pending={pending}
-                calib={calib}
-                onSelect={setSelection}
-                onTool={toSelect}
-                onAddNode={addNode}
-                onMoveNode={moveNode}
-                onMoveImage={(id, x, y) => updateImage(id, { x, y })}
-                onConnect={connect}
-                onPending={setPending}
-                onCalibPoint={(p) => setCalib((c) => (c.length >= 2 ? [p] : [...c, p]))}
-              />
-              {hasSide && (
-                <aside className="side">
-                  {selNode && <NodeEditor node={selNode} onChange={updateNode} />}
-                  {selEdge?.kind === 'pipe' && <PipeEditor pipe={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} canvasLengthM={pipeLengthM(project, selEdge)} onChange={updateEdge} />}
-                  {selEdge?.kind === 'valve' && <ValveEditor valve={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} onChange={updateEdge} />}
-                  {selEdge?.kind === 'pump' && <PumpEditor pump={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} onChange={updateEdge} headFitRmse={pumpFit} />}
-                </aside>
-              )}
-            </div>
-
-            <details className="panel">
-              <summary>Scale and images</summary>
-              <CanvasPanel
-                scaleMPerPx={project.scaleMPerPx}
-                canvasW={project.canvasW}
-                canvasH={project.canvasH}
-                images={project.images}
-                calib={calib}
-                calibActive={tool === 'scale'}
-                onScale={(s) => setProject((p) => ({ ...p, scaleMPerPx: s }), 'scale')}
-                onCanvasSize={(w, h) => setProject((p) => ({ ...p, canvasW: w, canvasH: h }), 'canvas')}
-                onAddImage={addImage}
-                onUpdateImage={updateImage}
-                onDeleteImage={deleteImage}
-                onStartCalib={() => { setCalib([]); setPending(undefined); setTool('scale'); }}
-                onApplyCalib={applyCalib}
-                onCancelCalib={() => { setCalib([]); setTool('select'); }}
-              />
-            </details>
-
-            <div className="below">
-              <Results computed={computed} onSelectName={selectByName} />
-              {chart && <div className="chart" style={{ aspectRatio: `${CHART_W} / ${CHART_H}` }} dangerouslySetInnerHTML={{ __html: chart.screen }} />}
-            </div>
-
-            <details className="panel">
-              <summary>Pump speed analysis</summary>
-              <SpeedPanel pumps={pumpEdges} config={{ ...speedCfg, pumpUid: speedPumpUid }} onConfig={setSpeedCfg} sweep={sweep} />
-            </details>
-
-            <details className="panel" open={scenarios.length > 0}>
-              <summary>Scenarios ({scenarios.length})</summary>
-              <ScenarioPanel scenarios={scenarios} comparison={comparison} onSave={saveScenario} onLoad={loadScenario} onDelete={deleteScenario} onRename={renameScenario} />
-            </details>
-          </>
+        <TopBar
+          buildId={typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev'}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={undo}
+          onRedo={redo}
+          onNew={() => replaceProject(blankProject())}
+          onExample={() => replaceProject(defaultProject())}
+          onOpenFile={(f) => void openFile(f)}
+          onSave={() => downloadProject(project, drafts)}
+          onExportInp={() => {
+            try {
+              const r = toInp(project);
+              download(new Blob([r.text], { type: 'text/plain' }), 'network.inp');
+              setMessage(r.notes.length ? { kind: 'info', text: r.notes.join(' ') } : undefined);
+            } catch (err) {
+              setMessage({ kind: 'error', text: `Could not export: ${err instanceof Error ? err.message : String(err)}` });
+            }
+          }}
+          unitSystem={unitSystem}
+          onUnits={setUnitSystem}
+          layout={layout}
+          onLayout={setLayout}
+          canExport={canExport}
+          onExport={() => void exportXlsx()}
+          onHelp={() => setHelp(true)}
+        />
+        {help && <HelpDialog onClose={() => setHelp(false)} />}
+        <FluidBar project={project} computed={computed} onFluid={edit.updateFluid} onSetting={(patch, k) => setProject((p) => ({ ...p, ...patch }), k)} />
+        <Workspace layout={layout} onLayout={setLayout} render={renderPanel} badge={badge} />
+        {message && (
+          <div className={`toast ${message.kind === 'error' ? 'error' : 'ok'}`} role="status">
+            <span>{message.text}</span>
+            <button aria-label="Dismiss" onClick={() => setMessage(undefined)}>×</button>
+          </div>
         )}
       </div>
+      </DensityContext.Provider>
     </UnitsContext.Provider>
   );
 }

@@ -75,3 +75,29 @@ describe('Network Excel export', () => {
     expect(hf.getCellValue({ sheet: sc, row: supplyRow, col: 4 }) as number).toBeLessThan(0);
   });
 });
+
+describe('Excel export: targets and pump curve library sheets', () => {
+  it('adds the sheets only when there is something to put in them, with the solver pass/fail', async () => {
+    const project = defaultProject();
+    const c = compute(project);
+    const j3 = project.nodes.find((n) => n.name === 'J3')!;
+    const gauge = c.result!.nodes.find((n) => n.id === 'J3')!.gaugePressurePa / 1000;
+    const { evaluateTargets } = await import('../src/ai/targets');
+    const targets = evaluateTargets(project, [{ id: 't1', type: 'pressure', nodeUid: j3.uid, minKPaG: gauge - 10 }, { id: 't2', type: 'pressure', nodeUid: j3.uid, minKPaG: gauge + 60 }], c);
+    const { newCurve } = await import('../src/pumpCurves');
+    const curve = newCurve('Datasheet A', { head: [{ q: 0, h: 50 }, { q: 10, h: 40 }], efficiency: [{ q: 10, eta: 62 }] });
+    const plain = await buildNetworkWorkbook({ model: c.model!, result: c.result!, npshMarginM: 0.5, pumpCurves: c.pumpCurves });
+    expect(plain.worksheets.map((w) => w.name)).not.toContain('Targets');
+    const wb = await buildNetworkWorkbook({ model: c.model!, result: c.result!, npshMarginM: 0.5, pumpCurves: c.pumpCurves, targets, curveLibrary: [curve] });
+    const back = new ExcelJS.Workbook();
+    await back.xlsx.load(await workbookToBuffer(wb));
+    const ts = back.getWorksheet('Targets')!;
+    expect(ts.getCell('B4').value).toBe('PASS');
+    expect(ts.getCell('B5').value).toBe('FAIL');
+    expect(Number(ts.getCell('D5').value)).toBeCloseTo(60, 1);
+    const cl = back.getWorksheet('Pump curve library')!;
+    const cells = cl.getSheetValues().flat().filter((v) => v !== undefined && v !== null);
+    expect(cells).toContain('Datasheet A');
+    expect(cells).toContain(62);
+  });
+});

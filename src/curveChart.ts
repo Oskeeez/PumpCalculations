@@ -89,7 +89,7 @@ export function pumpChartSvg(series: ChartSeries[], t: ChartTheme, axes: ChartAx
     o.push(`<line x1="${m.l + 12}" y1="${ly}" x2="${m.l + 36}" y2="${ly}" stroke="${c}" stroke-width="${s.dashed ? 1.5 : 2.5}"${s.dashed ? ' stroke-dasharray="5 4"' : ''}/><text x="${m.l + 42}" y="${ly + 4}" fill="${t.fg}">${s.name.replace(/[<&>]/g, '')}</text>`);
   });
   o.push(`<text x="${m.l + pw / 2}" y="${H - 10}" text-anchor="middle" fill="${t.fg}">Flow Q [${axes.flowLabel}]</text>`);
-  o.push(`<text transform="translate(16 ${m.t + ph / 2}) rotate(-90)" text-anchor="middle" fill="${t.fg}">Pump head H [${axes.headLabel}]</text>`);
+  o.push(`<text transform="translate(16 ${m.t + ph / 2}) rotate(-90)" text-anchor="middle" fill="${t.fg}">Head H [${axes.headLabel}]</text>`);
   o.push('</svg>');
   return o.join('');
 }

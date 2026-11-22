@@ -3,12 +3,18 @@
  * UI units: flow L/s, diameter & roughness mm, pressure kPa (absolute), temperature degC, efficiency %,
  * viscosity mPa.s.
  */
+import type { Assumption, Draft, Target } from './ai/types';
+import { JUNCTION_FITTING_LABELS, defaultFitting, junctionLegLosses, type JunctionFitting, type JunctionFittingType } from './fittings';
 import { DEFAULT_CANVAS, DEFAULT_SCALE_M_PER_PX, lengthFromCanvas } from './geometry';
 import {
   NetworkError,
+  ORIFICE_CD_DEFAULT,
+  orificeKPermanent,
   P_ATM,
   fitPump,
   fluidAt,
+  solveWithSpeedControl,
+  type SpeedControl,
   pumpHead,
   solveSystem,
   type FluidId,
@@ -38,7 +44,28 @@ export interface NodeUI {
   pressureKPa: number;
   /** External withdrawal [L/s]; negative = inflow (junctions only). */
   demandLps: number;
+  /** What the junction is: an elbow, tee, wye, cross or reducer. Plain junction when absent. */
+  fitting?: JunctionFitting;
+  /** Junction held at this gauge pressure [kPa] (a pressure boundary, like Fathom's Assigned Pressure). Its demand is then ignored. */
+  fixedPressureKPaG?: number;
+  /** A sprinkler, nozzle or spray outlet discharging to atmosphere: Q = K sqrt(p). */
+  emitter?: Emitter;
 }
+
+/** Outlet K-factor: L/min per sqrt(bar), or US gpm per sqrt(psi). */
+export interface Emitter {
+  k: number;
+  unit: 'lpm-bar' | 'gpm-psi';
+}
+
+/** Kv [m3/h per sqrt(bar)] of an outlet. */
+export function emitterKv(e: Emitter): number {
+  const lpmPerSqrtBar = e.unit === 'gpm-psi' ? e.k * 3.785411784 * Math.sqrt(14.503773773) : e.k;
+  return (lpmPerSqrtBar * 60) / 1000;
+}
+
+/** Names of the elements added for an outlet: the discharge (a check valve with the outlet's Kv) and the atmosphere it discharges to. */
+export const outletNames = (node: string) => ({ valve: `${node} outlet`, sink: `${node} (atmosphere)` });
 
 export interface FittingUI {
   name: string;
@@ -58,6 +85,10 @@ export interface PipeUI {
   diameterMm: number;
   roughnessMm: number;
   fittings: FittingUI[];
+  /** Optional pressure rating [kPa gauge]. An alert is raised when the solved pressure at either end exceeds it. */
+  ratingKPaG?: number;
+  /** Hazen-Williams C, used when the project friction method is Hazen-Williams. */
+  hazenC?: number;
 }
 
 export interface PumpUI {
@@ -72,9 +103,36 @@ export interface PumpUI {
   head: { q: number; h: number }[];
   efficiency: { q: number; eta: number }[];
   npshr: { q: number; h: number }[];
+  /** Impeller trim, D/D_full (1 = full diameter). Scales the curves by the affinity laws: Q ∝ D, H ∝ D². */
+  impellerTrim?: number;
+  /** Library curve this pump's data was taken from (its points are copied into head/efficiency/npshr). Cleared when edited by hand. */
+  curveId?: string;
+  /** false = switched off (standby). Default true. */
+  running?: boolean;
+  /** Variable-speed control: the solver sets the speed ratio to hold a flow or a node pressure (speedRatio is then the solved result). */
+  control?: PumpControl;
 }
 
-export type ValveLossType = ValveLoss['type'];
+/** Variable-speed pump control. Pressure is gauge [kPa], flow [L/s]. The speed stays between minRatio and maxRatio. */
+export type PumpControl =
+  | { mode: 'pressure'; nodeUid: string; kPaG: number; minRatio: number; maxRatio: number }
+  | { mode: 'flow'; lps: number; minRatio: number; maxRatio: number };
+
+export const defaultControl = (nodeUid: string): PumpControl => ({ mode: 'pressure', nodeUid, kPaG: 200, minRatio: 0.5, maxRatio: 1 });
+
+/** A named, reusable pump curve (flow L/s, head m, efficiency %, NPSHr m). */
+export interface PumpCurveEntry {
+  id: string;
+  name: string;
+  ratedRpm: number;
+  head: { q: number; h: number }[];
+  efficiency: { q: number; eta: number }[];
+  npshr: { q: number; h: number }[];
+  note?: string;
+}
+
+/** 'orifice': lossValue is the bore diameter [mm]; K is derived from the bore/diameter ratio and orificeCd. */
+export type ValveLossType = ValveLoss['type'] | 'orifice';
 export type ValveControlType = 'none' | 'prv' | 'psv' | 'fcv';
 
 export interface ValveUI {
@@ -87,7 +145,13 @@ export interface ValveUI {
   lossType: ValveLossType;
   /** K, Cv or Kv according to lossType. */
   lossValue: number;
+  /** Discharge coefficient for lossType 'orifice' (default 0.61). */
+  orificeCd?: number;
   checkValve: boolean;
+  /** A relief valve: a pressure-sustaining valve that stays shut below its set pressure and relieves above it. */
+  relief?: boolean;
+  /** Valve type chosen from the list (gate, globe, ...). The loss K follows it and the size. */
+  valveType?: string;
   open: boolean;
   /** Regulation: none, pressure-reducing, pressure-sustaining or flow-control. */
   controlType: ValveControlType;
@@ -112,6 +176,8 @@ export interface ProjectUI {
   npshMarginM: number;
   /** Design alert: warn above this velocity [m/s]; 0 disables. */
   maxVelocityMps: number;
+  /** Pipe friction: Darcy-Weisbach with roughness (default) or Hazen-Williams with C. */
+  frictionMethod?: 'dw' | 'hw';
   nodes: NodeUI[];
   edges: EdgeUI[];
   /** Canvas scale [m per pixel]. */
@@ -123,6 +189,38 @@ export interface ProjectUI {
   images: ImageLayer[];
   /** Saved what-if snapshots of the network (see analysis.ts). */
   scenarios?: Scenario[];
+  /** Design targets (see ai/targets.ts). */
+  targets?: Target[];
+  /** Assumptions recorded for AI-generated parts of the network. */
+  assumptions?: Assumption[];
+  /** AI drafts. Held outside the undo history by the app, but saved in the project file. */
+  drafts?: Draft[];
+  /** Library of reusable pump curves. */
+  pumpCurves?: PumpCurveEntry[];
+  /** Uids of nodes and components the solver must not change (anything connected to a locked node is kept too). */
+  locked?: string[];
+  /** Title block and revision history for the printed calculation. */
+  calcRecord?: CalcRecord;
+}
+
+export interface CalcRevision {
+  rev: string;
+  date: string;
+  description: string;
+  preparedBy: string;
+  checkedBy: string;
+  approvedBy: string;
+  /** Fingerprint of the hydraulic model when the revision was issued. */
+  fingerprint?: string;
+}
+
+export interface CalcRecord {
+  title: string;
+  calcNo: string;
+  project: string;
+  client: string;
+  notes: string;
+  revisions: CalcRevision[];
 }
 
 export interface ImageLayer {
@@ -141,7 +239,7 @@ export interface ImageLayer {
 }
 
 /** Everything the hydraulic calculation needs (no images, no saved scenarios). */
-export type HydraulicProject = Omit<ProjectUI, 'scenarios' | 'images'>;
+export type HydraulicProject = Omit<ProjectUI, 'scenarios' | 'images' | 'targets' | 'assumptions' | 'drafts' | 'pumpCurves' | 'locked' | 'calcRecord'>;
 
 /** A named snapshot of the hydraulic model (images are not part of a snapshot). */
 export interface Scenario {
@@ -155,8 +253,12 @@ export const newUid = (): string => `u${++counter}`;
 
 /** Make sure newly created uids cannot collide with those of a loaded project. */
 export function syncUidCounter(p: ProjectUI): void {
-  for (const id of [...p.nodes.map((n) => n.uid), ...p.edges.map((e) => e.uid)]) {
-    const n = Number(id.replace(/^u/, ''));
+  const ids: string[] = [...p.nodes.map((n) => n.uid), ...p.edges.map((e) => e.uid), ...(p.targets ?? []).map((t) => t.id), ...(p.assumptions ?? []).map((a) => a.id), ...(p.pumpCurves ?? []).map((c) => c.id)];
+  for (const d of p.drafts ?? []) {
+    ids.push(d.id, d.runId, ...d.project.nodes.map((n) => n.uid), ...d.project.edges.map((e) => e.uid), ...d.base.project.nodes.map((n) => n.uid), ...d.base.project.edges.map((e) => e.uid), ...d.targets.map((t) => t.id), ...d.assumptions.map((a) => a.id));
+  }
+  for (const id of ids) {
+    const n = Number(/(\d+)$/.exec(id)?.[1]);
     if (Number.isFinite(n) && n > counter) counter = n;
   }
 }
@@ -168,6 +270,27 @@ export function uniqueName(base: string, taken: string[]): string {
 }
 
 export const defaultFluid = (): FluidUI => ({ id: 'water', customName: 'Custom fluid', customDensity: 850, customViscosityMPas: 5, customVaporKPa: 1 });
+
+const nameOfUid = (p: HydraulicProject, uid: string) => p.nodes.find((n) => n.uid === uid)?.name;
+
+/** Hazen-Williams C for a new pipe when none is given (new steel or ductile iron). */
+export const DEFAULT_HAZEN_C = 130;
+
+/** Make a junction an elbow, tee, wye, cross or reducer (or plain again), naming it to match. */
+export function setJunctionFitting(p: ProjectUI, uid: string, type: JunctionFittingType | 'none'): ProjectUI {
+  const taken = p.nodes.filter((n) => n.uid !== uid).map((n) => n.name);
+  return {
+    ...p,
+    nodes: p.nodes.map((n) => {
+      if (n.uid !== uid || n.kind !== 'junction') return n;
+      const plain = !n.fitting;
+      const wasDefault = /^(Junction|Elbow|Tee|Wye|Cross|Reducer) \d+$/.test(n.name);
+      const { fitting: _old, ...rest } = n;
+      if (type === 'none') return wasDefault ? { ...rest, name: uniqueName('Junction', taken) } : rest;
+      return { ...rest, fitting: defaultFitting(type), ...(plain || wasDefault ? { name: uniqueName(type === 'reducer' ? 'Reducer' : JUNCTION_FITTING_LABELS[type], taken) } : {}) };
+    }),
+  };
+}
 
 export function newNode(kind: NodeKind, x: number, y: number, taken: string[]): NodeUI {
   return {
@@ -189,6 +312,124 @@ export function newPipe(from: string, to: string, taken: string[]): PipeUI {
 
 export function newValve(from: string, to: string, taken: string[]): ValveUI {
   return { kind: 'valve', uid: newUid(), name: uniqueName('Valve', taken), from, to, diameterMm: 102.26, lossType: 'K', lossValue: 0.15, checkValve: false, open: true, controlType: 'none', controlValue: 200 };
+}
+
+export type InsertKind = 'junction' | 'tank' | 'valve' | 'orifice' | 'pump';
+
+/**
+ * Insert a junction, valve or pump into an existing pipe at the point on the pipe closest to (x, y).
+ * The pipe is split in two (the original keeps its uid, name, fittings and upstream end; the new downstream
+ * pipe copies its diameter, roughness and length mode). Manual lengths are shared in proportion to the split.
+ * A valve or pump sits between two new junctions placed a short distance apart along the line.
+ */
+export function insertOnPipe(p: ProjectUI, pipeUid: string, kind: InsertKind, x: number, y: number): { project: ProjectUI; selectUid: string } {
+  const pipe = p.edges.find((e) => e.uid === pipeUid);
+  if (!pipe || pipe.kind !== 'pipe') throw new Error('Elements can only be inserted into a pipe.');
+  const a = p.nodes.find((n) => n.uid === pipe.from);
+  const b = p.nodes.find((n) => n.uid === pipe.to);
+  if (!a || !b) throw new Error(`${pipe.name} is connected to a missing node.`);
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / (len * len)));
+  const single = kind === 'junction' || kind === 'tank';
+  const half = single ? 0 : Math.min(25 / len, 0.2);
+  const t1 = Math.max(0.1, Math.min(0.9 - 2 * half, t - half));
+  const t2 = single ? t1 : t1 + 2 * half;
+  const names = p.nodes.map((n) => n.name);
+  const mk = (tt: number, nodeKind: NodeKind = 'junction'): NodeUI => {
+    const n = newNode(nodeKind, Math.round(a.x + dx * tt), Math.round(a.y + dy * tt), names);
+    n.elevationM = a.elevationM + (b.elevationM - a.elevationM) * tt;
+    names.push(n.name);
+    return n;
+  };
+  const j1 = mk(t1, kind === 'tank' ? 'tank' : 'junction');
+  const j2 = single ? j1 : mk(t2);
+  const edgeNames = p.edges.map((e) => e.name);
+  const tail: PipeUI = { ...pipe, uid: newUid(), name: uniqueName('Pipe', edgeNames), from: j2.uid, to: pipe.to, fittings: [], lengthM: pipe.lengthM * (1 - t2) };
+  edgeNames.push(tail.name);
+  const head: PipeUI = { ...pipe, to: j1.uid, lengthM: pipe.lengthM * t1 };
+  const middle: EdgeUI[] = [];
+  let selectUid = j1.uid;
+  if (kind === 'valve' || kind === 'orifice') {
+    const v = kind === 'orifice' ? newOrifice(j1.uid, j2.uid, edgeNames, pipe.diameterMm) : newValve(j1.uid, j2.uid, edgeNames);
+    v.diameterMm = pipe.diameterMm;
+    middle.push(v);
+    selectUid = v.uid;
+  } else if (kind === 'pump') {
+    const pu = newPump(j1.uid, j2.uid, edgeNames);
+    middle.push(pu);
+    selectUid = pu.uid;
+  }
+  return {
+    project: {
+      ...p,
+      nodes: single ? [...p.nodes, j1] : [...p.nodes, j1, j2],
+      edges: p.edges.flatMap((e) => (e.uid === pipe.uid ? [head, ...middle, tail] : [e])),
+    },
+    selectUid,
+  };
+}
+
+export function newOrifice(from: string, to: string, taken: string[], diameterMm = 102.26): ValveUI {
+  return { kind: 'valve', uid: newUid(), name: uniqueName('Orifice', taken), from, to, diameterMm, lossType: 'orifice', lossValue: Math.round(diameterMm * 5) / 10, orificeCd: ORIFICE_CD_DEFAULT, checkValve: false, open: true, controlType: 'none', controlValue: 200 };
+}
+
+export type ConnectKindM = 'pipe' | 'pump' | 'valve' | 'orifice';
+
+/** A new pipe, pump, valve or orifice between two nodes. Valves and orifices take the given diameter. */
+export function makeEdge(kind: ConnectKindM, from: string, to: string, taken: string[], diameterMm = 102.26): EdgeUI {
+  if (kind === 'pipe') return newPipe(from, to, taken);
+  if (kind === 'pump') return newPump(from, to, taken);
+  if (kind === 'orifice') return newOrifice(from, to, taken, diameterMm);
+  return { ...newValve(from, to, taken), diameterMm };
+}
+
+/** Drag a connector from a node into empty space: the far end becomes a new junction at that point (same elevation as the start). */
+export function connectToNewNode(p: ProjectUI, kind: ConnectKindM, fromUid: string, x: number, y: number, diameterMm?: number): { project: ProjectUI; selectUid: string } {
+  const start = p.nodes.find((n) => n.uid === fromUid);
+  if (!start) throw new Error('The start node no longer exists.');
+  const end = newNode('junction', x, y, p.nodes.map((n) => n.name));
+  end.elevationM = start.elevationM;
+  const e = makeEdge(kind, fromUid, end.uid, p.edges.map((q) => q.name), diameterMm);
+  return { project: { ...p, nodes: [...p.nodes, end], edges: [...p.edges, e] }, selectUid: e.uid };
+}
+
+/**
+ * Drag across blank canvas with a pipe/pump/valve/orifice tool: a new junction at the start point, and either another new junction
+ * at the end point or, when the drag ends on an existing node, that node. The element joins them, start to end.
+ */
+export function connectBlank(p: ProjectUI, kind: ConnectKindM, a: { x: number; y: number }, b: { x: number; y: number } | { uid: string }, diameterMm?: number): { project: ProjectUI; selectUid: string } {
+  const names = p.nodes.map((n) => n.name);
+  const endNode = 'uid' in b ? p.nodes.find((n) => n.uid === b.uid) : undefined;
+  if ('uid' in b && !endNode) throw new Error('The end node no longer exists.');
+  const start = newNode('junction', a.x, a.y, names);
+  start.elevationM = endNode ? endNode.elevationM : 0;
+  names.push(start.name);
+  const end = endNode ?? newNode('junction', (b as { x: number }).x, (b as { y: number }).y, names);
+  if (!endNode) end.elevationM = start.elevationM;
+  const e = makeEdge(kind, start.uid, end.uid, p.edges.map((q) => q.name), diameterMm);
+  return { project: { ...p, nodes: endNode ? [...p.nodes, start] : [...p.nodes, start, end], edges: [...p.edges, e] }, selectUid: e.uid };
+}
+
+/**
+ * Place a pump, valve or orifice on its own, anywhere on the canvas: two new junctions 90 px apart (suction on the left,
+ * discharge on the right) joined by the element. Connect those nodes to the rest of the network afterwards.
+ */
+export function placeStandalone(p: ProjectUI, kind: 'pump' | 'valve' | 'orifice', x: number, y: number, elevationM = 0): { project: ProjectUI; selectUid: string } {
+  const names = p.nodes.map((n) => n.name);
+  const mk = (px: number, label: string): NodeUI => {
+    const n = newNode('junction', px, y, names);
+    n.name = uniqueName(label, names);
+    n.elevationM = elevationM;
+    names.push(n.name);
+    return n;
+  };
+  const a = mk(x - 45, kind === 'pump' ? 'Suction' : 'Inlet');
+  const b = mk(x + 45, kind === 'pump' ? 'Discharge' : 'Outlet');
+  const taken = p.edges.map((e) => e.name);
+  const e: EdgeUI = kind === 'pump' ? newPump(a.uid, b.uid, taken) : kind === 'orifice' ? newOrifice(a.uid, b.uid, taken) : newValve(a.uid, b.uid, taken);
+  return { project: { ...p, nodes: [...p.nodes, a, b], edges: [...p.edges, e] }, selectUid: e.uid };
 }
 
 export function defaultPumpCurve() {
@@ -288,9 +529,19 @@ export function toSystemModel(p: HydraulicProject): SystemModel {
   const nodes: SysNode[] = p.nodes.map((n) =>
     n.kind === 'tank'
       ? { kind: 'tank', id: n.name, elevationM: n.elevationM, liquidLevelM: n.levelM, surfacePressurePa: n.pressureKPa * 1000 }
-      : { kind: 'junction', id: n.name, elevationM: n.elevationM, demandM3s: n.demandLps / 1000 },
+      : n.fixedPressureKPaG !== undefined
+        ? { kind: 'tank', id: n.name, elevationM: n.elevationM, liquidLevelM: 0, surfacePressurePa: P_ATM + n.fixedPressureKPaG * 1000 }
+        : { kind: 'junction', id: n.name, elevationM: n.elevationM, demandM3s: n.demandLps / 1000 },
   );
+  for (const n of p.nodes) {
+    if (n.kind !== 'junction') continue;
+    if (n.fixedPressureKPaG !== undefined && !Number.isFinite(n.fixedPressureKPaG)) throw new Error(`${n.name}: fixed pressure must be a number.`);
+    if (n.emitter && !(n.emitter.k > 0)) throw new Error(`${n.name}: outlet K-factor must be greater than 0.`);
+    if (n.emitter && n.fixedPressureKPaG !== undefined) throw new Error(`${n.name}: a node cannot have a fixed pressure and an outlet.`);
+    if (n.emitter) nodes.push({ kind: 'tank', id: outletNames(n.name).sink, elevationM: n.elevationM, liquidLevelM: 0, surfacePressurePa: P_ATM });
+  }
   for (const n of p.nodes) if (n.kind === 'tank' && !(n.levelM >= 0)) throw new Error(`${n.name}: liquid level must be ≥ 0.`);
+  const legLoss = junctionLegLosses(p.nodes, p.edges.filter((e): e is PipeUI => e.kind === 'pipe'));
   const edges: SysEdge[] = p.edges.map((e): SysEdge => {
     const from = nameOf.get(e.from);
     const to = nameOf.get(e.to);
@@ -300,16 +551,27 @@ export function toSystemModel(p: HydraulicProject): SystemModel {
       const length = pipeLengthM(p, e);
       if (!(length >= 0)) throw new Error(`${e.name}: length must be ≥ 0.`);
       if (!(e.roughnessMm >= 0)) throw new Error(`${e.name}: roughness must be ≥ 0.`);
+      if (p.frictionMethod === 'hw' && e.hazenC !== undefined && !(e.hazenC > 0)) throw new Error(`${e.name}: Hazen-Williams C must be > 0.`);
       if (e.fittings.some((f) => !(f.k >= 0))) throw new Error(`${e.name}: fitting K values must be ≥ 0.`);
       return {
         kind: 'pipe', id: e.name, from, to,
-        spec: { lengthM: length, innerDiameterM: e.diameterMm / 1000, roughnessM: e.roughnessMm / 1000, elevationChangeM: 0, fittingsK: e.fittings.map((f) => f.k) },
+        spec: { lengthM: length, innerDiameterM: e.diameterMm / 1000, roughnessM: e.roughnessMm / 1000, elevationChangeM: 0, fittingsK: [...e.fittings.map((f) => f.k), ...(legLoss.has(e.uid) ? [legLoss.get(e.uid) as number] : [])], ...(p.frictionMethod === 'hw' ? { hazenC: e.hazenC ?? DEFAULT_HAZEN_C } : {}) },
       };
     }
     if (e.kind === 'valve') {
       if (!(e.diameterMm > 0)) throw new Error(`${e.name}: diameter must be > 0.`);
-      if (e.lossType === 'K' ? !(e.lossValue >= 0) : !(e.lossValue > 0)) throw new Error(`${e.name}: ${e.lossType} must be ${e.lossType === 'K' ? '≥ 0' : '> 0'}.`);
-      const loss: ValveLoss = e.lossType === 'K' ? { type: 'K', k: e.lossValue } : e.lossType === 'Cv' ? { type: 'Cv', cv: e.lossValue } : { type: 'Kv', kv: e.lossValue };
+      let loss: ValveLoss;
+      if (e.lossType === 'orifice') {
+        if (!(e.lossValue > 0 && e.lossValue < e.diameterMm)) throw new Error(`${e.name}: orifice bore must be greater than 0 and smaller than the pipe diameter.`);
+        try {
+          loss = { type: 'K', k: orificeKPermanent(e.lossValue / e.diameterMm, e.orificeCd ?? ORIFICE_CD_DEFAULT) };
+        } catch (err) {
+          throw new Error(`${e.name}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      } else {
+        if (e.lossType === 'K' ? !(e.lossValue >= 0) : !(e.lossValue > 0)) throw new Error(`${e.name}: ${e.lossType} must be ${e.lossType === 'K' ? '≥ 0' : '> 0'}.`);
+        loss = e.lossType === 'K' ? { type: 'K', k: e.lossValue } : e.lossType === 'Cv' ? { type: 'Cv', cv: e.lossValue } : { type: 'Kv', kv: e.lossValue };
+      }
       let control: ValveControl | undefined;
       if (e.controlType === 'prv' || e.controlType === 'psv') {
         if (!(e.controlValue >= 0)) throw new Error(`${e.name}: set pressure must be ≥ 0.`);
@@ -322,13 +584,26 @@ export function toSystemModel(p: HydraulicProject): SystemModel {
     }
     if (!(e.speedRatio > 0)) throw new Error(`${e.name}: speed ratio must be > 0.`);
     if (e.head.length < 2 || new Set(e.head.map((x) => x.q)).size < 2) throw new Error(`${e.name}: head curve needs at least 2 points with different flows.`);
+    if (e.control) {
+      const c = e.control;
+      if (!(c.minRatio > 0) || !(c.maxRatio > c.minRatio)) throw new Error(`${e.name}: speed limits must satisfy 0 < minimum < maximum.`);
+      if (c.mode === 'flow' && !(c.lps > 0)) throw new Error(`${e.name}: the flow to hold must be greater than 0.`);
+      if (c.mode === 'pressure' && (!Number.isFinite(c.kPaG) || !nameOf.has(c.nodeUid))) throw new Error(`${e.name}: choose a node and a pressure to hold.`);
+    }
+    const trim = e.impellerTrim ?? 1;
+    if (!(trim > 0 && trim <= 1.0001)) throw new Error(`${e.name}: impeller trim must be between 0 and 1.`);
     const model: PumpModel = fitPump({
-      head: e.head.map((x) => ({ flowM3s: x.q / 1000, headM: x.h })),
-      efficiency: e.efficiency.length >= 2 ? e.efficiency.map((x) => ({ flowM3s: x.q / 1000, eta: x.eta / 100 })) : undefined,
-      npshr: e.npshr.length >= 2 ? e.npshr.map((x) => ({ flowM3s: x.q / 1000, npshrM: x.h })) : undefined,
+      head: e.head.map((x) => ({ flowM3s: (x.q / 1000) * trim, headM: x.h * trim * trim })),
+      efficiency: e.efficiency.length >= 2 ? e.efficiency.map((x) => ({ flowM3s: (x.q / 1000) * trim, eta: x.eta / 100 })) : undefined,
+      npshr: e.npshr.length >= 2 ? e.npshr.map((x) => ({ flowM3s: (x.q / 1000) * trim, npshrM: x.h * trim * trim })) : undefined,
     });
-    return { kind: 'pump', id: e.name, from, to, model, speedRatio: e.speedRatio };
+    return { kind: 'pump', id: e.name, from, to, model, speedRatio: e.speedRatio, running: e.running !== false };
   });
+  for (const n of p.nodes) {
+    if (n.kind !== 'junction' || !n.emitter) continue;
+    const o = outletNames(n.name);
+    edges.push({ kind: 'valve', id: o.valve, from: n.name, to: o.sink, spec: { diameterM: 0.05, loss: { type: 'Kv', kv: emitterKv(n.emitter) }, checkValve: true, open: true } });
+  }
   return { fluid, nodes, edges };
 }
 
@@ -352,8 +627,29 @@ export interface Computed {
 
 export function compute(p: HydraulicProject): Computed {
   try {
-    const model = toSystemModel(p);
-    const result = solveSystem(model, { npshMarginM: p.npshMarginM });
+    let model = toSystemModel(p);
+    const opts = { npshMarginM: p.npshMarginM };
+    const controls: SpeedControl[] = [];
+    for (const e of p.edges) {
+      if (e.kind !== 'pump' || !e.control || e.running === false) continue;
+      const c = e.control;
+      controls.push({
+        pumpId: e.name,
+        minRatio: c.minRatio,
+        maxRatio: c.maxRatio,
+        target: c.mode === 'flow' ? { kind: 'flow', m3s: c.lps / 1000 } : { kind: 'pressure', nodeId: p.nodes.find((n) => n.uid === c.nodeUid)?.name ?? '', pa: c.kPaG * 1000 },
+      });
+    }
+    let result: SystemResult;
+    const controlNotes: string[] = [];
+    if (controls.length) {
+      const solved = solveWithSpeedControl(model, controls, opts);
+      model = solved.model;
+      result = solved.result;
+      controlNotes.push(...solved.notes);
+    } else {
+      result = solveSystem(model, opts);
+    }
     const pumpCurves: PumpCurveData[] = [];
     for (const e of model.edges) {
       if (e.kind !== 'pump') continue;
@@ -370,6 +666,23 @@ export function compute(p: HydraulicProject): Computed {
     if (p.maxVelocityMps > 0) {
       for (const x of result.pipes) if (x.flow.velocity > p.maxVelocityMps) alerts.push(`Pipe "${x.id}": velocity ${x.flow.velocity.toFixed(2)} m/s exceeds the ${p.maxVelocityMps} m/s limit.`);
       for (const x of result.valves) if (x.velocity > p.maxVelocityMps) alerts.push(`Valve "${x.id}": velocity ${x.velocity.toFixed(2)} m/s exceeds the ${p.maxVelocityMps} m/s limit.`);
+    }
+    alerts.unshift(...controlNotes);
+    // a relief valve wide open with the pressure still above its setting is too small for the flow
+    for (const e of p.edges) {
+      if (e.kind !== 'valve' || !e.relief || e.controlType !== 'psv') continue;
+      const v = result.valves.find((x) => x.id === e.name);
+      const up = result.nodes.find((n) => n.id === nameOfUid(p, e.from));
+      if (v && up && v.status === 'open' && up.gaugePressurePa / 1000 > e.controlValue * 1.005) alerts.push(`Relief valve "${e.name}" is fully open and the pressure upstream (${(up.gaugePressurePa / 1000).toFixed(0)} kPa) is above its setting (${e.controlValue.toFixed(0)} kPa): it is too small for this flow.`);
+    }
+    // pipes with a pressure rating: the highest pressure is at one of the end nodes (or at the lowest end when the pipe falls)
+    for (const e of p.edges) {
+      if (e.kind !== 'pipe' || !(e.ratingKPaG !== undefined && e.ratingKPaG > 0)) continue;
+      for (const uid of [e.from, e.to]) {
+        const node = p.nodes.find((n) => n.uid === uid);
+        const gauge = node ? result.nodes.find((x) => x.id === node.name)?.gaugePressurePa : undefined;
+        if (node && gauge !== undefined && gauge / 1000 > e.ratingKPaG) alerts.push(`Pipe "${e.name}": pressure ${(gauge / 1000).toFixed(0)} kPa at "${node.name}" exceeds its rating of ${e.ratingKPaG} kPa.`);
+      }
     }
     return { model, result, pumpCurves, alerts };
   } catch (err) {
@@ -389,6 +702,7 @@ export function hydraulicKey(p: HydraulicProject): string {
     p.temperatureC,
     p.npshMarginM,
     p.maxVelocityMps,
+    p.frictionMethod ?? 'dw',
     usesCanvas ? p.scaleMPerPx : 0,
     p.nodes.map(({ x, y, ...rest }) => (usesCanvas ? { x, y, ...rest } : rest)),
     p.edges,
@@ -425,10 +739,11 @@ function normalizeProject(p: Partial<ProjectUI> | undefined, depth = 0): Project
     temperatureC: p.temperatureC,
     npshMarginM: p.npshMarginM,
     maxVelocityMps: isNum(p.maxVelocityMps) ? p.maxVelocityMps : 3,
+    ...(p.frictionMethod === 'hw' ? { frictionMethod: 'hw' as const } : {}),
     nodes: p.nodes as NodeUI[],
     edges: (p.edges as EdgeUI[]).map((e) =>
       e.kind === 'valve'
-        ? { ...e, controlType: e.controlType ?? 'none', controlValue: isNum(e.controlValue) ? e.controlValue : 200 }
+        ? { ...e, controlType: e.controlType ?? 'none', controlValue: isNum(e.controlValue) ? e.controlValue : 200, ...(e.lossType === 'orifice' && !isNum(e.orificeCd) ? { orificeCd: ORIFICE_CD_DEFAULT } : {}) }
         : e.kind === 'pump'
           ? { ...e, ratedRpm: isNum(e.ratedRpm) ? e.ratedRpm : 1450 }
           : { ...e, lengthMode: e.lengthMode === 'canvas' ? 'canvas' : 'manual' },
@@ -443,6 +758,50 @@ function normalizeProject(p: Partial<ProjectUI> | undefined, depth = 0): Project
     project.images = p.images.map((im) => {
       if (!im || !isStr(im.id) || !isStr(im.name) || !isStr(im.dataUrl) || ![im.x, im.y, im.width, im.height, im.opacity].every(isNum)) throw new Error('An image in the project file is malformed.');
       return { ...im, locked: im.locked === true };
+    });
+  }
+  if (p.targets !== undefined) {
+    if (!Array.isArray(p.targets) || p.targets.some((t) => !t || !isStr(t.id) || !['flow', 'pressure', 'velocity', 'pumpRange', 'npsh'].includes(t.type))) throw new Error('A target in the project file is malformed.');
+    project.targets = p.targets;
+  }
+  if (p.assumptions !== undefined) {
+    if (!Array.isArray(p.assumptions) || p.assumptions.some((a) => !a || !isStr(a.id) || !isStr(a.text))) throw new Error('An assumption in the project file is malformed.');
+    project.assumptions = p.assumptions;
+  }
+  if (p.locked !== undefined) {
+    if (!Array.isArray(p.locked) || p.locked.some((u) => !isStr(u))) throw new Error('The list of locked items in the project file is malformed.');
+    const known = new Set([...p.nodes.map((n) => n.uid), ...p.edges.map((e) => e.uid)]);
+    project.locked = p.locked.filter((u) => known.has(u));
+  }
+  if (p.calcRecord !== undefined) {
+    const c = p.calcRecord as Partial<CalcRecord>;
+    const str = (v: unknown) => (typeof v === 'string' ? v : '');
+    project.calcRecord = {
+      title: str(c.title), calcNo: str(c.calcNo), project: str(c.project), client: str(c.client), notes: str(c.notes),
+      revisions: Array.isArray(c.revisions) ? c.revisions.filter((r) => r && typeof r === 'object').map((r) => ({ rev: str(r.rev), date: str(r.date), description: str(r.description), preparedBy: str(r.preparedBy), checkedBy: str(r.checkedBy), approvedBy: str(r.approvedBy), ...(typeof r.fingerprint === 'string' ? { fingerprint: r.fingerprint } : {}) })) : [],
+    };
+  }
+  if (p.pumpCurves !== undefined) {
+    const ok = (a: unknown, k1: string, k2: string) => Array.isArray(a) && a.every((r) => r && isNum((r as Record<string, unknown>)[k1]) && isNum((r as Record<string, unknown>)[k2]));
+    if (!Array.isArray(p.pumpCurves) || p.pumpCurves.some((c) => !c || !isStr(c.id) || !isStr(c.name) || !ok(c.head, 'q', 'h') || !ok(c.efficiency, 'q', 'eta') || !ok(c.npshr, 'q', 'h'))) throw new Error('A pump curve in the project file is malformed.');
+    project.pumpCurves = p.pumpCurves.map((c) => ({ ...c, ratedRpm: isNum(c.ratedRpm) ? c.ratedRpm : 1450 }));
+  }
+  if (depth === 0 && p.drafts !== undefined) {
+    if (!Array.isArray(p.drafts)) throw new Error('The drafts in the project file are malformed.');
+    const hyd = (x: unknown): HydraulicProject => {
+      const { scenarios: _s, images: _i, targets: _t, assumptions: _a, drafts: _d, pumpCurves: _c, locked: _l, calcRecord: _r, ...rest } = normalizeProject(x as Partial<ProjectUI>, 1);
+      return rest;
+    };
+    project.drafts = p.drafts.map((d) => {
+      if (!d || !isStr(d.id) || !isStr(d.name) || !d.base || !Array.isArray(d.targets) || !Array.isArray(d.changes)) throw new Error('A draft in the project file is malformed.');
+      return {
+        ...d,
+        rationale: isStr(d.rationale) ? d.rationale : '',
+        project: hyd(d.project),
+        base: { project: hyd(d.base.project), targets: Array.isArray(d.base.targets) ? d.base.targets : [] },
+        assumptions: Array.isArray(d.assumptions) ? d.assumptions : [],
+        status: d.status === 'merged' || d.status === 'discarded' || d.status === 'reference' ? d.status : 'open',
+      };
     });
   }
   if (depth === 0 && Array.isArray(p.scenarios)) {

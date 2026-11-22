@@ -15,6 +15,8 @@ export interface PipeSpec {
   elevationChangeM: number;
   /** Minor-loss coefficients K of fittings [-], referenced to this pipe's velocity head. */
   fittingsK: readonly number[];
+  /** Hazen-Williams C. When given, friction uses Hazen-Williams instead of Darcy-Weisbach (roughness is then ignored). */
+  hazenC?: number;
 }
 
 export interface PipeFlowState {
@@ -31,6 +33,15 @@ export interface PipeFlowState {
   totalHeadLoss: number;
 }
 
+/**
+ * Hazen-Williams friction loss [m]: h = k L Q^1.852 / (C^1.852 D^4.871), SI units. k is EPANET's 4.727 (ft, cfs) converted
+ * exactly to metres and m3/s (about 10.67), so results agree with EPANET.
+ */
+export const HW_K_SI = 4.727 * (1 / 0.028316846592) ** 1.852 * 0.3048 ** 4.871;
+export function hazenWilliamsLoss(lengthM: number, diameterM: number, c: number, flowM3s: number): number {
+  return (HW_K_SI * lengthM * Math.abs(flowM3s) ** 1.852) / (c ** 1.852 * diameterM ** 4.871);
+}
+
 export function pipeArea(diameterM: number): number {
   return (Math.PI / 4) * diameterM * diameterM;
 }
@@ -44,6 +55,7 @@ export function validatePipe(spec: PipeSpec): void {
   if (!(spec.innerDiameterM > 0)) throw new RangeError('Pipe diameter must be > 0');
   if (!(spec.roughnessM >= 0)) throw new RangeError('Pipe roughness must be >= 0');
   if (spec.fittingsK.some((k) => !(k >= 0))) throw new RangeError('Fitting K values must be >= 0');
+  if (spec.hazenC !== undefined && !(spec.hazenC > 0)) throw new RangeError('Hazen-Williams C must be > 0');
 }
 
 /** Flow state for flow magnitude |Q| (sign is ignored). */
@@ -54,9 +66,13 @@ export function pipeFlowState(spec: PipeSpec, fluid: Fluid, flowM3s: number): Pi
   const velocityHead = (v * v) / (2 * G);
   const re = (fluid.density * v * D) / fluid.dynamicViscosity;
   const regime = flowRegime(re);
-  const f = darcyFrictionFactor(re, spec.roughnessM / D);
+  let f = darcyFrictionFactor(re, spec.roughnessM / D);
   let hf: number;
-  if (regime === 'zero') {
+  if (spec.hazenC !== undefined) {
+    hf = hazenWilliamsLoss(spec.lengthM, D, spec.hazenC, q);
+    // the Darcy factor that gives the same loss, for reporting
+    f = velocityHead > 0 && spec.lengthM > 0 ? hf / ((spec.lengthM / D) * velocityHead) : Infinity;
+  } else if (regime === 'zero') {
     hf = 0;
   } else if (regime === 'laminar') {
     // Hagen-Poiseuille written to stay finite and linear in v as Q -> 0 (f -> infinity)
@@ -76,12 +92,22 @@ export function pipeFlowState(spec: PipeSpec, fluid: Fluid, flowM3s: number): Pi
   };
 }
 
+/**
+ * Loss coefficient used for a pipe with exactly zero resistance (zero length and no fittings). Such a pipe would have no head loss
+ * at any flow, which the network solver cannot invert (the flow would be undetermined). 1e-4 is a straight connection for every
+ * practical purpose. Pipes with any resistance at all are not touched.
+ */
+export const MIN_PIPE_K = 1e-4;
+
 /** Pipe as a network element: headDrop(Q) is an odd function of Q. */
 export function createPipeElement(spec: PipeSpec, fluid: Fluid): HydraulicElement {
   validatePipe(spec);
+  const area = pipeArea(spec.innerDiameterM);
+  const degenerate = spec.lengthM === 0 && totalK(spec) === 0;
+  const floor = degenerate ? MIN_PIPE_K / (2 * G * area * area) : 0; // head per (m3/s)^2
   const loss = (q: number): number => {
     const s = Math.sign(q);
-    return s * pipeFlowState(spec, fluid, q).totalHeadLoss;
+    return s * (pipeFlowState(spec, fluid, q).totalHeadLoss + floor * q * q);
   };
   return {
     kind: 'pipe',

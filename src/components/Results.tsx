@@ -13,9 +13,7 @@ export function Results({ computed, onSelectName }: { computed: Computed; onSele
   const Lps = (m3s: number) => m3s * 1000; // canonical flow for display helpers
   return (
     <div className="results">
-      <div className={`banner ${r.converged ? 'ok' : 'error'}`}>
-        {r.converged ? `Solved in ${r.iterations} iterations` : `Not converged: ${r.message}`}
-      </div>
+      {!r.converged && <div className="banner error">Not converged: {r.message}</div>}
       <div className="kpis">
         <div><span>Supplied by tanks</span><b>{U.f('flow', Lps(tankSupply))}</b> {U.u('flow')}</div>
         <div><span>Junction demand</span><b>{U.f('flow', Lps(demand))}</b> {U.u('flow')}</div>

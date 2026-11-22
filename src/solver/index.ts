@@ -7,6 +7,7 @@
  *  series                                       : single-line system, operating point, NPSH, curves
  */
 export * from './constants';
+export * from './control';
 export * from './element';
 export * from './fluid';
 export * from './friction';
@@ -19,3 +20,4 @@ export * from './series';
 export * from './system';
 export * from './valve';
 export * from './fluidLibrary';
+export * from './orifice';

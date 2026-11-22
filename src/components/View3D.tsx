@@ -29,10 +29,13 @@ interface Rig {
   renderer: THREE.WebGLRenderer;
   labels: CSS2DRenderer;
   scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera;
+  camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   controls: OrbitControls;
   content: THREE.Group;
   fitted: boolean;
+  view: View;
+  /** Orthographic views: half the vertical extent shown [world units], before the camera zoom. */
+  orthoHalf: number;
 }
 
 /** World (X east, Y north, Z up) to three.js (X, Y up, Z toward the viewer). */
@@ -97,7 +100,9 @@ function populate(rig: Rig, sc: Scene3D, project: ProjectUI, o: Options, U: Unit
   if (o.grid) {
     const size = Math.ceil((span * 1.3) / 10) * 10;
     const grid = new THREE.GridHelper(size, Math.round(size / 5), 0x8892a6, 0x3a4256);
-    grid.position.set((sc.min.x + sc.max.x) / 2, floor - 0.01, -(sc.min.y + sc.max.y) / 2);
+    // layers from the bottom: image, grid, then the network. The gaps scale with the model so depth precision never makes them fight.
+    grid.position.set((sc.min.x + sc.max.x) / 2, floor - span * 0.002, -(sc.min.y + sc.max.y) / 2);
+    grid.renderOrder = 1;
     g.add(grid);
   }
   const axisLen = span * 0.18;
@@ -122,11 +127,12 @@ function populate(rig: Rig, sc: Scene3D, project: ProjectUI, o: Options, U: Unit
       const h = im.height * s;
       const tex = loader.load(im.dataUrl, () => rig.renderer.render(rig.scene, rig.camera));
       tex.colorSpace = THREE.SRGBColorSpace;
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: im.opacity, side: THREE.DoubleSide, depthWrite: false }));
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: im.opacity, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 }));
+      mesh.renderOrder = 0;
       mesh.rotation.x = -Math.PI / 2;
       const cx = (im.x + im.width / 2) * s;
       const cy = (project.canvasH - (im.y + im.height / 2)) * s;
-      mesh.position.set(cx, floor - 0.02, -cy);
+      mesh.position.set(cx, floor - span * 0.004, -cy);
       g.add(mesh);
     }
   }
@@ -197,23 +203,74 @@ function populate(rig: Rig, sc: Scene3D, project: ProjectUI, o: Options, U: Unit
   }
 }
 
+/** Size of the drawing area in CSS pixels. */
+function stageSize(rig: Rig): { w: number; h: number } {
+  const v = rig.renderer.getSize(new THREE.Vector2());
+  return { w: Math.max(v.x, 1), h: Math.max(v.y, 1) };
+}
+
+function applyAspect(rig: Rig) {
+  const { w, h } = stageSize(rig);
+  const cam = rig.camera;
+  if (cam instanceof THREE.OrthographicCamera) {
+    const half = rig.orthoHalf;
+    cam.left = (-half * w) / h;
+    cam.right = (half * w) / h;
+    cam.top = half;
+    cam.bottom = -half;
+  } else cam.aspect = w / h;
+  cam.updateProjectionMatrix();
+}
+
+/**
+ * Camera for a named view. Plan, front and side are orthographic and exactly axis-aligned (no perspective, no tilt),
+ * with rotation locked so they stay dead straight; pan and zoom still work. Isometric is a free-orbit perspective view.
+ */
 function setView(rig: Rig, sc: Scene3D, view: View, o: Options) {
   const c = new THREE.Vector3((sc.min.x + sc.max.x) / 2, ((sc.min.z + sc.max.z) / 2) * o.zExag, -(sc.min.y + sc.max.y) / 2);
-  const span = Math.max(sc.max.x - sc.min.x, sc.max.y - sc.min.y, (sc.max.z - sc.min.z) * o.zExag, 10);
+  const sx = sc.max.x - sc.min.x;
+  const sy = sc.max.y - sc.min.y;
+  const sz = (sc.max.z - sc.min.z) * o.zExag;
+  const span = Math.max(sx, sy, sz, 10);
   const d = span * 1.15;
-  // plan view looks straight down from just south of the centre, so X runs right and Y (north) runs up the screen
-  const offset = {
-    iso: new THREE.Vector3(0.85, 0.7, 0.85),
-    top: new THREE.Vector3(0, 1.5, 0.06),
-    front: new THREE.Vector3(0, 0.3, 1.5),
-    side: new THREE.Vector3(1.5, 0.3, 0),
-  }[view];
-  rig.camera.position.copy(c).addScaledVector(offset, d);
-  rig.camera.near = Math.max(span / 1000, 0.01);
-  rig.camera.far = span * 40;
-  rig.camera.updateProjectionMatrix();
-  rig.controls.target.copy(c);
-  rig.controls.update();
+  const { w, h } = stageSize(rig);
+  const aspect = w / h;
+  rig.controls.dispose();
+  let cam: Rig['camera'];
+  if (view === 'iso') {
+    const p = new THREE.PerspectiveCamera(45, aspect, Math.max(span / 200, 0.05), span * 20);
+    p.position.copy(c).add(new THREE.Vector3(0.85, 0.7, 0.85).multiplyScalar(d));
+    cam = p;
+  } else {
+    // screen width and height of the model seen from this direction
+    const [vw, vh] = view === 'top' ? [sx, sy] : view === 'front' ? [sx, sz] : [sy, sz];
+    const margin = 1.25;
+    rig.orthoHalf = Math.max((vh * margin) / 2, (vw * margin) / (2 * aspect), span * 0.08);
+    const dist = span * 3;
+    const o3 = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, dist + span * 6);
+    if (view === 'top') {
+      o3.up.set(0, 0, -1); // north up the screen, east to the right
+      o3.position.copy(c).add(new THREE.Vector3(0, dist, 0));
+    } else if (view === 'front') {
+      o3.position.copy(c).add(new THREE.Vector3(0, 0, dist)); // from the south, looking north; east to the right
+    } else {
+      o3.position.copy(c).add(new THREE.Vector3(dist, 0, 0)); // from the east, looking west; north to the right
+    }
+    cam = o3;
+  }
+  rig.camera = cam;
+  rig.view = view;
+  applyAspect(rig);
+  cam.lookAt(c);
+  const controls = new OrbitControls(cam, rig.labels.domElement);
+  controls.enableDamping = true;
+  if (view !== 'iso') {
+    controls.enableRotate = false;
+    controls.screenSpacePanning = true;
+  }
+  controls.target.copy(c);
+  controls.update();
+  rig.controls = controls;
 }
 
 export default function View3D({ project, computed }: Props) {
@@ -254,7 +311,7 @@ export default function View3D({ project, computed }: Props) {
     controls.enableDamping = true;
     const content = new THREE.Group();
     scene.add(content);
-    const r: Rig = { renderer, labels, scene, camera, controls, content, fitted: false };
+    const r: Rig = { renderer, labels, scene, camera, controls, content, fitted: false, view: 'iso', orthoHalf: 10 };
     rig.current = r;
 
     const resize = () => {
@@ -262,8 +319,7 @@ export default function View3D({ project, computed }: Props) {
       const h = Math.max(host.clientHeight, 200);
       renderer.setSize(w, h);
       labels.setSize(w, h);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
+      applyAspect(r);
     };
     const ro = new ResizeObserver(resize);
     ro.observe(host);
@@ -271,9 +327,9 @@ export default function View3D({ project, computed }: Props) {
 
     let raf = 0;
     const loop = () => {
-      controls.update();
-      renderer.render(scene, camera);
-      labels.render(scene, camera);
+      r.controls.update();
+      renderer.render(scene, r.camera);
+      labels.render(scene, r.camera);
       raf = requestAnimationFrame(loop);
     };
     loop();
@@ -281,7 +337,7 @@ export default function View3D({ project, computed }: Props) {
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
-      controls.dispose();
+      r.controls.dispose();
       disposeGroup(content);
       renderer.dispose();
       host.removeChild(renderer.domElement);
@@ -298,7 +354,7 @@ export default function View3D({ project, computed }: Props) {
     if (!r.fitted) {
       setView(r, sc, 'iso', opts);
       r.fitted = true;
-    }
+    } else if (r.view !== 'iso') setView(r, sc, r.view, opts); // keep an axis view framed when the model or height scale changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sc, project.images, project.scaleMPerPx, opts, U.system]);
 
@@ -309,10 +365,10 @@ export default function View3D({ project, computed }: Props) {
     <div className="view3d">
       <div className="v3-bar">
         <span className="seg" role="group" aria-label="Camera">
-          <button onClick={() => jump('iso')}>Isometric</button>
-          <button onClick={() => jump('top')}>Plan</button>
-          <button onClick={() => jump('front')}>Front</button>
-          <button onClick={() => jump('side')}>Side</button>
+          <button onClick={() => jump('iso')} title="Free 3D view: drag to rotate">Isometric</button>
+          <button onClick={() => jump('top')} title="Straight down, north up. Pan and zoom only.">Plan</button>
+          <button onClick={() => jump('front')} title="Straight on from the south. Pan and zoom only.">Front</button>
+          <button onClick={() => jump('side')} title="Straight on from the east. Pan and zoom only.">Side</button>
         </span>
         <label><input type="checkbox" checked={opts.labels} onChange={() => toggle('labels')} /> Names</label>
         <label><input type="checkbox" checked={opts.coords} onChange={() => toggle('coords')} disabled={!opts.labels} /> Coordinates</label>
@@ -325,7 +381,17 @@ export default function View3D({ project, computed }: Props) {
       <div className="v3-stage" ref={mount} />
       {failed && <div className="banner error">{failed}</div>}
 
-      <div className="below">
+    </div>
+  );
+}
+
+/** Coordinate tables for every node and element (X east, Y north, Z up). */
+export function Coords3D({ project, computed }: Props) {
+  const U = useUnits();
+  const sc = useMemo(() => buildScene(project, computed.result), [project, computed.result]);
+  return (
+    <div className="coords3d">
+      <div className="coords-tables">
         <div className="table-wrap">
           <h3>Nodes</h3>
           <table>

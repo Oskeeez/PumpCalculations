@@ -237,7 +237,12 @@ export function solveNetwork(net: Network, opts: NetworkSolveOptions = {}): Netw
     ev.flows.forEach((q, k) => (qPrev[k] = q));
     converged = maxAbs(ev.residual) <= tol;
     if (!converged && alpha < 1e-8) {
-      message = 'Line search stalled';
+      // Very stiff elements (zero-length pipes, wide-open valves) can leave a flow imbalance that floating-point
+      // rounding cannot reduce further. Within 1000 x the tolerance that is a converged answer, not a failure.
+      if (maxAbs(ev.residual) <= tol * 1e3) {
+        converged = true;
+        message = `Converged in ${iterations} iterations (to the rounding limit)`;
+      } else message = 'Line search stalled';
       break;
     }
   }

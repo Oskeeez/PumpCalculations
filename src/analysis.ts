@@ -46,7 +46,7 @@ export function speedSweep(project: ProjectUI, pumpUid: string, ratios: number[]
   if (!pump || pump.kind !== 'pump') return undefined;
   const rows: SpeedRow[] = [];
   const series: ChartSeries[] = [];
-  const results = ratios.map((r) => ({ r, c: compute({ ...project, edges: project.edges.map((e) => (e.uid === pumpUid ? { ...e, speedRatio: r } : e)) }) }));
+  const results = ratios.map((r) => ({ r, c: compute({ ...project, edges: project.edges.map((e) => (e.uid === pumpUid ? { ...e, speedRatio: r, control: undefined } : e)) }) }));
   const maxRatio = Math.max(...ratios, 1e-9);
   // common flow axis for every curve
   const first = results.find((x) => x.c.model);
@@ -91,7 +91,7 @@ export function speedSweep(project: ProjectUI, pumpUid: string, ratios: number[]
 // ---------------------------------------------------------------- scenarios
 
 export function snapshotScenario(project: ProjectUI, name: string): Scenario {
-  const { scenarios: _scenarios, images: _images, ...rest } = project;
+  const { scenarios: _scenarios, images: _images, targets: _targets, assumptions: _assumptions, drafts: _drafts, pumpCurves: _curves, locked: _locked, calcRecord: _record, ...rest } = project;
   return { id: newUid(), name: name.trim() || 'Scenario', project: JSON.parse(JSON.stringify(rest)) as Scenario['project'] };
 }
 

@@ -166,6 +166,32 @@ describe('EPANET Net1 validation', () => {
     expect(Math.max(...flowDiff)).toBeLessThan(0.5); // gpm (EPANET stops at its own convergence criterion)
   });
 
+  it('A2) the app pipe model with Hazen-Williams C matches EPANET through the full system solver', () => {
+    const nu = 1.1e-5 * FT * FT;
+    const fluid: Fluid = { name: 'EPANET water', temperatureC: 20, density: 1000, dynamicViscosity: nu * 1000, vaporPressure: 2339 };
+    const z = (id: string) => (JUNCTIONS.find((j) => j[0] === id)?.[1] ?? 0) * FT;
+    const sys: SystemModel = {
+      fluid,
+      nodes: [
+        ...JUNCTIONS.map(([id]) => ({ kind: 'junction' as const, id, elevationM: z(id), demandM3s: demandM3s(id) })),
+        { kind: 'tank', id: RESERVOIR.id, elevationM: RESERVOIR.head * FT, liquidLevelM: 0, surfacePressurePa: 101325 },
+        { kind: 'tank', id: TANK.id, elevationM: TANK.elevation * FT, liquidLevelM: TANK.level * FT, surfacePressurePa: 101325 },
+      ],
+      edges: [
+        ...PIPES.map(([id, a, b, L, D]) => ({
+          kind: 'pipe' as const, id, from: a, to: b,
+          spec: { lengthM: L * FT, innerDiameterM: D * IN, roughnessM: 0, elevationChangeM: 0, fittingsK: [], hazenC: 100 },
+        })),
+        { kind: 'pump', id: 'pump', from: PUMP.from, to: PUMP.to, model: pumpModel, speedRatio: 1 },
+      ],
+    };
+    const ours = solveSystem(sys, { flowTolM3s: 1e-12 });
+    expect(ours.converged, ours.message).toBe(true);
+    const headDiffFt = Object.keys(hw.headFt).map((id) => Math.abs(ours.nodes.find((n) => n.id === id)!.headM / FT - hw.headFt[id]));
+    expect(Math.max(...headDiffFt)).toBeLessThan(0.05);
+    for (const [id] of PIPES) expect(Math.abs(ours.pipes.find((p) => p.id === id)!.flowM3s / GPM - hw.flowGpm[id])).toBeLessThan(0.5);
+  });
+
   it('B) with Darcy-Weisbach, our Colebrook model stays within a small, quantified band of EPANET', () => {
     // EPANET internal viscosity 1.1e-5 ft2/s; density only scales gauge pressure, not heads.
     const nu = 1.1e-5 * FT * FT;

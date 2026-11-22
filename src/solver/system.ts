@@ -57,6 +57,8 @@ export interface SysPump {
   to: string;
   model: PumpModel;
   speedRatio: number;
+  /** false = switched off (standby): the pump is removed from the network, like a closed valve. Default true. */
+  running?: boolean;
 }
 
 export interface SysValve {
@@ -194,7 +196,7 @@ export function buildNetwork(m: SystemModel, mods: BuildMods = {}): Network {
       return { id: n.id, demandM3s: n.demandM3s + (mods.extraDemand?.get(n.id) ?? 0) };
     }),
     edges: m.edges
-      .filter((e) => !removed.has(e.id) && !(e.kind === 'valve' && !e.spec.open))
+      .filter((e) => !removed.has(e.id) && !(e.kind === 'valve' && !e.spec.open) && !(e.kind === 'pump' && e.running === false))
       .map((e) => ({
         id: e.id,
         from: e.from,
@@ -347,9 +349,10 @@ export function solveSystem(m: SystemModel, opts: SystemOptions = {}): SystemRes
         else if (c.type === 'prv' && hFrom - set < openLoss(v, Math.max(q, 0)) - TOL_H) next = 'open';
         else if (c.type === 'psv' && set - hTo < openLoss(v, Math.max(q, 0)) - TOL_H) next = 'open';
         else if (c.type === 'fcv' && hFrom - hTo < openLoss(v, c.flowM3s) - TOL_H) next = 'open';
-      } else if (hFrom - hTo > TOL_H && !(c.type === 'prv' && hTo >= set - TOL_H)) {
+      } else if (hFrom - hTo > TOL_H && !(c.type === 'prv' && hTo >= set - TOL_H) && !(c.type === 'psv' && hFrom <= set + TOL_H)) {
         // Closed (reverse flow was blocked): try again once forward flow is possible. A PRV additionally stays
-        // closed while the downstream head is above its set head (e.g. an unregulated bypass overfeeds that side).
+        // closed while the downstream head is above its set head (e.g. an unregulated bypass overfeeds that side),
+        // and a PSV (or relief valve) while the upstream head cannot reach its set head.
         next = 'open';
       }
       if (next !== st) {
@@ -404,7 +407,7 @@ export function solveSystem(m: SystemModel, opts: SystemOptions = {}): SystemRes
       else if (regStatus === 'active') st = 'active';
       else if (e.spec.checkValve && h2 - h1 > 1e-6 && q < 1e-6) st = 'check-closed';
       const c = e.spec.control;
-      if (regStatus === 'closed') w.push(`Valve "${e.id}": regulating valve is closed (reverse flow is blocked).`);
+      if (regStatus === 'closed') w.push(e.spec.control?.type === 'psv' ? `Valve "${e.id}": closed; the upstream pressure is below its set pressure.` : `Valve "${e.id}": regulating valve is closed (reverse flow is blocked).`);
       if (st === 'check-closed') w.push(`Valve "${e.id}": check valve is closed (downstream head exceeds upstream by ${(h2 - h1).toFixed(2)} m); no forward flow.`);
       if (c && c.type !== 'fcv' && isTank.has(c.type === 'prv' ? e.to : e.from)) w.push(`Valve "${e.id}": cannot regulate the head of a tank; it acts as an open valve.`);
       const v = Math.abs(q) / pipeArea(e.spec.diameterM);
@@ -441,7 +444,9 @@ export function solveSystem(m: SystemModel, opts: SystemOptions = {}): SystemRes
     const eta = forward ? pumpEfficiency(e.model, q, e.speedRatio) : undefined;
     const npshr = forward ? pumpNpshr(e.model, q, e.speedRatio) : undefined;
     const w: string[] = [];
-    if (!forward) {
+    if (e.running === false) {
+      w.push(`Pump "${e.id}": switched off.`);
+    } else if (!forward) {
       w.push(
         head > pumpShutoffHead(e.model, e.speedRatio)
           ? `Pump "${e.id}": no flow. The head across it (${head.toFixed(1)} m) exceeds its shutoff head, so the check valve is closed.`

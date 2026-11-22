@@ -3,6 +3,7 @@ import type { SpeedSweep } from '../analysis';
 import { CHART_H, CHART_W, SCREEN_THEME, pumpChartSvg } from '../curveChart';
 import type { PumpUI } from '../model';
 import { unitFactor, useUnits } from '../units';
+import type { PickAccept } from './Canvas';
 import { NumField } from './NumField';
 
 export interface SpeedConfig {
@@ -17,10 +18,12 @@ interface Props {
   config: SpeedConfig;
   onConfig: (c: SpeedConfig) => void;
   sweep?: SpeedSweep;
+  pickId?: string;
+  onPick: (id: string, accept: PickAccept, label: string, apply: (uid: string) => void) => void;
 }
 
 /** Pump curves at several speeds (affinity laws) with the system's operating point at each speed. */
-export function SpeedPanel({ pumps, config, onConfig, sweep }: Props) {
+export function SpeedPanel({ pumps, config, onConfig, sweep, pickId, onPick }: Props) {
   const U = useUnits();
   const svg = useMemo(
     () =>
@@ -35,17 +38,20 @@ export function SpeedPanel({ pumps, config, onConfig, sweep }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sweep, U.system],
   );
-  if (pumps.length === 0) return <p className="hint">No pumps in the network.</p>;
+  if (pumps.length === 0) return <p className="hint">No pumps.</p>;
   const num = (v: number | undefined, d = 1) => (v === undefined || !Number.isFinite(v) ? '–' : v.toFixed(d));
   return (
     <div>
       <div className="grid">
-        <label className="field">
-          <span>Pump</span>
-          <select value={config.pumpUid} onChange={(e) => onConfig({ ...config, pumpUid: e.target.value })}>
-            {pumps.map((p) => <option key={p.uid} value={p.uid}>{p.name}</option>)}
-          </select>
-        </label>
+        <div className="field-pick">
+          <label className="field">
+            <span>Pump</span>
+            <select value={config.pumpUid} onChange={(e) => onConfig({ ...config, pumpUid: e.target.value })}>
+              {pumps.map((p) => <option key={p.uid} value={p.uid}>{p.name}</option>)}
+            </select>
+          </label>
+          <button className={`pick-btn ${pickId === 'speed:pump' ? 'active' : ''}`} aria-pressed={pickId === 'speed:pump'} title="Choose by clicking a pump on the network" onClick={() => onPick('speed:pump', 'pump', 'Speed analysis pump', (uid) => onConfig({ ...config, pumpUid: uid }))}>◎ Pick</button>
+        </div>
         <NumField label="From" unit="% of rated speed" value={config.minPct} onChange={(v) => onConfig({ ...config, minPct: v })} />
         <NumField label="To" unit="% of rated speed" value={config.maxPct} onChange={(v) => onConfig({ ...config, maxPct: v })} />
         <NumField label="Step" unit="%" value={config.stepPct} onChange={(v) => onConfig({ ...config, stepPct: v })} />

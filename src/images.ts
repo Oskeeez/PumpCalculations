@@ -1,3 +1,5 @@
+import type { ImageLayer } from './model';
+
 export interface LoadedImage {
   dataUrl: string;
   width: number;
@@ -37,4 +39,11 @@ export async function loadImageFile(file: File, maxSide = 2000): Promise<LoadedI
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+/** A new image layer for a file, sized to fit the canvas, semi-transparent and placed at the top-left. */
+export async function layerFromFile(file: File, canvasW: number, canvasH: number): Promise<ImageLayer> {
+  const img = await loadImageFile(file);
+  const k = Math.min(1, canvasW / img.width, canvasH / img.height);
+  return { id: `img${Date.now()}`, name: file.name, dataUrl: img.dataUrl, x: 0, y: 0, width: Math.round(img.width * k), height: Math.round(img.height * k), opacity: 0.6, locked: false };
 }
