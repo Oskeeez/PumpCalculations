@@ -88,12 +88,25 @@ export async function dragTab(page: Page, source: Locator, targetGroup: Locator,
   await source.dispatchEvent('dragend', { dataTransfer: dt });
 }
 
-/** A point on the drawn line of an SVG path (half way along it), in page coordinates. */
+/**
+ * A point on the drawn line of an SVG path, in page coordinates, where nothing else (a label, a symbol) is on top of it:
+ * tries points along the path until the element under the point belongs to the same group as the path.
+ */
 export async function pointOnPath(path: Locator): Promise<{ x: number; y: number }> {
   return path.evaluate((el) => {
     const p = el as SVGPathElement;
-    const pt = p.getPointAtLength(p.getTotalLength() / 2);
+    const group = p.parentElement!;
     const m = p.getScreenCTM()!;
-    return { x: pt.x * m.a + pt.y * m.c + m.e, y: pt.x * m.b + pt.y * m.d + m.f };
+    const len = p.getTotalLength();
+    const at = (t: number) => {
+      const pt = p.getPointAtLength(len * t);
+      return { x: pt.x * m.a + pt.y * m.c + m.e, y: pt.x * m.b + pt.y * m.d + m.f };
+    };
+    for (const t of [0.3, 0.7, 0.25, 0.75, 0.35, 0.65, 0.2, 0.8, 0.4, 0.6, 0.5]) {
+      const q = at(t);
+      const hit = document.elementFromPoint(q.x, q.y);
+      if (hit && group.contains(hit)) return q;
+    }
+    return at(0.3);
   });
 }
