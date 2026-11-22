@@ -60,3 +60,36 @@ describe('fittings and pipe library', () => {
     await s.close();
   });
 });
+
+describe('fitting library', () => {
+  it('imports company fittings from Excel and offers them on a pipe, and lets a junction use its own loss', async () => {
+    const s = await open(app);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Fittings');
+    ws.addRow(['Category', 'Name', 'K', 'L/D', 'Source']);
+    ws.addRow(['Acme', 'Acme knife gate', 0.12, '', 'Datasheet 7']);
+    ws.addRow(['Acme', 'Acme cast elbow', '', 14, 'Datasheet 8']);
+    ws.addRow(['Acme', 'broken', '', '', '']);
+    const nodeBuffer = (globalThis as unknown as { Buffer: { from: (b: ArrayBuffer) => never } }).Buffer;
+    const buffer = nodeBuffer.from((await wb.xlsx.writeBuffer()) as ArrayBuffer);
+
+    await s.page.locator('.ws-tab', { hasText: 'Fittings' }).first().click();
+    await s.page.getByLabel('Fitting file').setInputFiles({ name: 'fittings.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer });
+    await s.page.waitForSelector('.pipelib .banner');
+    expect(await s.page.locator('.pipelib .banner').textContent()).toMatch(/Imported 2 fittings/);
+    expect(await s.page.locator('.pipelib td', { hasText: 'Datasheet 7' }).count()).toBe(1);
+
+    await s.page.locator('g.edge.pipe .edge-line').first().click({ force: true });
+    await s.page.locator('.ws-tab', { hasText: 'Properties' }).first().click();
+    await s.page.locator('select').filter({ has: s.page.locator('option', { hasText: 'Acme knife gate' }) }).first().selectOption({ label: 'Acme knife gate (K 0.12)' });
+    expect(await s.page.locator('.side td input').last().inputValue()).not.toBe('');
+    expect(await s.page.locator('.side input[value="Acme knife gate"]').count()).toBe(1);
+
+    await s.page.locator('g.node.junction').first().click({ force: true });
+    await s.page.getByLabel('Junction fitting').selectOption('elbow');
+    await s.page.getByLabel('Use my own loss values').check();
+    expect(await s.page.getByLabel('Fill loss from list').count()).toBe(1);
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+});

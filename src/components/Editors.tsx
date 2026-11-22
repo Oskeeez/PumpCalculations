@@ -3,7 +3,8 @@ import { MATERIALS, matchMaterial, matchPipeSize } from '../library';
 import { usePipeLibrary } from '../pipeLibrary';
 import { defaultControl, type EdgeUI, type FittingUI, type NodeUI, type PipeUI, type PumpControl, type PumpCurveEntry, type PumpUI, type ValveControlType, type ValveLossType, type ValveUI } from '../model';
 import { orificeBoreForDrop, requiredCv, requiredKv } from '../sizing';
-import { ELBOW_STYLES, FITTING_LIBRARY, JUNCTION_FITTING_LABELS, VALVE_TYPES, fittingK, fittingStatus, valveTypeK, type ElbowStyle, type JunctionFitting, type JunctionFittingType } from '../fittings';
+import { useFittingLibrary } from '../fittingLibrary';
+import { ELBOW_STYLES, crossLegK, elbowK, reducerK, teeBranchK, teeRunK, FLANGED_BEND_NFT, JUNCTION_FITTING_LABELS, VALVE_TYPES, fittingK, fittingStatus, valveTypeK, type ElbowStyle, type JunctionFitting, type JunctionFittingType } from '../fittings';
 import { useUnits, type Quantity } from '../units';
 import { NumField } from './NumField';
 import { PressureField } from './PressureField';
@@ -22,6 +23,11 @@ export function NodeEditor({ node, nodes, edges, onChange, onSetFitting }: { nod
   const f = node.fitting;
   const status = f ? fittingStatus(node, nodes, edges.filter((e): e is PipeUI => e.kind === 'pipe')) : undefined;
   const setF = (patch: Partial<JunctionFitting>) => f && onChange({ ...node, fitting: { ...f, ...patch } });
+  const fittingList = useFittingLibrary();
+  const dmin = status && status.legs.length ? Math.min(...status.legs.map((l) => l.diameterMm)) : 100;
+  const calcK = f && status && !status.problem ? (f.type === 'elbow' ? elbowK(status.angleDeg ?? 90, f.style, dmin, f.rOverD ?? 1.5) : f.type === 'cross' ? crossLegK(dmin) : f.type === 'reducer' && status.legs.length === 2 ? reducerK(Math.min(...status.legs.map((l) => l.diameterMm)), Math.max(...status.legs.map((l) => l.diameterMm)), f.coneDeg, 'contraction') : 0) : 0;
+  const calcRun = teeRunK(dmin);
+  const calcBranch = teeBranchK(status?.angleDeg ?? 90, dmin);
   return (
     <section className="editor">
       <h3>{isTank ? 'Tank' : 'Junction'}</h3>
@@ -47,8 +53,15 @@ export function NodeEditor({ node, nodes, edges, onChange, onSetFitting }: { nod
             </label>
             {f?.type === 'elbow' && (
               <label className="field"><span>Style</span>
-                <select value={f.style} onChange={(e) => setF({ style: e.target.value as ElbowStyle })}>
+                <select value={f.style === 'long' ? 'flanged' : f.style} onChange={(e) => setF({ style: e.target.value as ElbowStyle })}>
                   {ELBOW_STYLES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                </select>
+              </label>
+            )}
+            {f?.type === 'elbow' && (f.style === 'flanged' || f.style === 'long') && (
+              <label className="field"><span>r/D</span>
+                <select aria-label="Bend radius over diameter" value={String(f.style === 'long' ? 1.5 : f.rOverD ?? 1.5)} onChange={(e) => setF({ style: 'flanged', rOverD: Number(e.target.value) })}>
+                  {FLANGED_BEND_NFT.map(([r]) => <option key={r} value={String(r)}>{r}</option>)}
                 </select>
               </label>
             )}
@@ -72,6 +85,38 @@ export function NodeEditor({ node, nodes, edges, onChange, onSetFitting }: { nod
                 <NumField label={f.type === 'elbow' ? 'Turn' : 'Branch angle'} unit="°" value={f.angleDeg} onChange={(v) => v >= 0 && v <= 180 && setF({ angleDeg: v })} />
               )}
             </div>
+          )}
+          {f && (
+            <>
+              <div className="field opt">
+                <label><input type="checkbox" checked={!!f.override} onChange={(e) => setF({ override: e.target.checked ? (f.type === 'tee' || f.type === 'wye' ? { runK: calcRun, branchK: calcBranch } : { k: calcK }) : undefined })} /> Use my own loss values</label>
+              </div>
+              {f.override && (
+                <div className="grid">
+                  {f.type === 'tee' || f.type === 'wye' ? (
+                    <>
+                      <NumField label="Run loss K" unit="–" value={f.override.runK ?? calcRun} onChange={(v) => v >= 0 && setF({ override: { ...f.override, runK: v } })} />
+                      <NumField label="Branch loss K" unit="–" value={f.override.branchK ?? calcBranch} onChange={(v) => v >= 0 && setF({ override: { ...f.override, branchK: v } })} />
+                    </>
+                  ) : (
+                    <NumField label={f.type === 'cross' ? 'Loss K per pipe' : 'Loss K'} unit="–" value={f.override.k ?? calcK} onChange={(v) => v >= 0 && setF({ override: { k: v } })} />
+                  )}
+                  <label className="field"><span>Fill from list</span>
+                    <select aria-label="Fill loss from list" value="" onChange={(e) => {
+                      const item = fittingList.all.find((x) => `${x.category}|${x.name}` === e.target.value);
+                      if (!item) return;
+                      const k = Math.round(fittingK(item, dmin) * 1000) / 1000;
+                      setF({ override: f.type === 'tee' || f.type === 'wye' ? { ...f.override, branchK: k } : { k } });
+                    }}>
+                      <option value="">Choose…</option>
+                      {[...new Set(fittingList.all.map((x) => x.category))].map((c) => (
+                        <optgroup key={c} label={c}>{fittingList.all.filter((x) => x.category === c).map((x) => <option key={x.name} value={`${x.category}|${x.name}`}>{x.name} (K {fittingK(x, dmin).toFixed(2)})</option>)}</optgroup>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+            </>
           )}
           {status?.problem && <div className="banner warn">{status.problem}</div>}
         </>
@@ -108,6 +153,7 @@ export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: 
   const setFit = (i: number, f: FittingUI) => onChange({ ...pipe, fittings: pipe.fittings.map((x, j) => (j === i ? f : x)) });
   const total = pipe.fittings.reduce((s, f) => s + f.k, 0);
   const lib = usePipeLibrary();
+  const fittingList = useFittingLibrary();
   const matched = matchPipeSize(pipe.diameterMm, undefined, lib.all);
   const [series, setSeries] = useState(matched?.series ?? 'sch40');
   const seriesDef = lib.all.find((x) => x.id === series) ?? lib.all[0];
@@ -186,14 +232,14 @@ export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: 
         <select
           value=""
           onChange={(e) => {
-            const p = FITTING_LIBRARY.find((x) => x.name === e.target.value);
+            const p = fittingList.all.find((x) => `${x.category}|${x.name}` === e.target.value);
             if (p) onChange({ ...pipe, fittings: [...pipe.fittings, { name: p.name, k: Math.round(fittingK(p, pipe.diameterMm) * 1000) / 1000 }] });
           }}
         >
           <option value="">Choose…</option>
-          {[...new Set(FITTING_LIBRARY.map((p) => p.category))].map((c) => (
+          {[...new Set(fittingList.all.map((p) => p.category))].map((c) => (
             <optgroup key={c} label={c}>
-              {FITTING_LIBRARY.filter((p) => p.category === c).map((p) => <option key={p.name} value={p.name}>{p.name} (K {fittingK(p, pipe.diameterMm).toFixed(2)})</option>)}
+              {fittingList.all.filter((p) => p.category === c).map((p) => <option key={p.name} value={`${p.category}|${p.name}`} title={p.source}>{p.name} (K {fittingK(p, pipe.diameterMm).toFixed(2)})</option>)}
             </optgroup>
           ))}
         </select>

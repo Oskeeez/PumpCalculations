@@ -20,6 +20,7 @@ import { SpeedPanel, type SpeedConfig } from './components/SpeedPanel';
 import { TargetsPanel } from './components/TargetsPanel';
 import { SolvePanel } from './components/SolvePanel';
 import { PipeLibraryPanel } from './components/PipeLibraryPanel';
+import { FittingLibraryPanel } from './components/FittingLibraryPanel';
 import { SizeForPanel } from './components/SizeForPanel';
 import type { JunctionFittingType } from './fittings';
 import { DEFAULT_SOLVE_SETTINGS, solveForTargets, type SolveOutcome, type SolveSettings } from './autosolve';
@@ -488,6 +489,8 @@ export function App() {
             onShowTargets={() => showPanel('targets')}
           />
         );
+      case 'fittinglib':
+        return <FittingLibraryPanel />;
       case 'pipelib':
         return <PipeLibraryPanel />;
       case 'pumpcurves':

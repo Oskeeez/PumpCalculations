@@ -12,7 +12,8 @@ Based on AFT Fathom's junction list, its Fittings & Losses library (about 400 it
 | Cross | Four pipes, equal loss per leg. Approximation. |
 | Reducer / expander | Junction between two pipes of different diameter. Sudden or gradual (cone angle). Crane loss, referenced to the smaller pipe. |
 | Valve types | Gate, globe, angle, ball, butterfly, plug, swing / lift / tilting-disc / stop check. K from Crane L/D and the valve size. |
-| Fittings library | Grouped drop-down (elbows, tees, entrances and exits, valves, other). K from L/D and the pipe size. |
+| Fittings library | Grouped drop-down, K from L/D and the pipe size, each entry with its source. Company fittings import from Excel. Checked against Crane TP-410 in `tests/validation/crane-fittings.test.ts`. |
+| Own loss values | Any junction can use typed or company-list loss values instead of the calculated ones. |
 | Pipe size library | Built-in series plus company series imported from Excel or CSV. Template download. |
 | Standard sizing | Smallest standard size from the chosen series that meets a velocity limit or head-loss limit at the solved flow. |
 

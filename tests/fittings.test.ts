@@ -31,7 +31,7 @@ describe('fitting losses', () => {
   it('valve and library K scale with fT', () => {
     expect(valveTypeK('gate', 100)).toBeCloseTo(8 * craneFT(100), 9);
     expect(valveTypeK('nothing', 100)).toBeUndefined();
-    expect(fittingK({ category: 'x', name: 'y', k: 0.5 }, 100)).toBe(0.5);
+    expect(fittingK({ category: 'x', name: 'y', k: 0.5, source: 'test' }, 100)).toBe(0.5);
     expect(FITTING_LIBRARY.length).toBeGreaterThanOrEqual(30);
   });
 });
@@ -105,5 +105,18 @@ describe('fittings in the solver', () => {
     expect(kSum(withElbow)).toBeGreaterThan(kSum(p));
     expect(compute(withElbow).error).toBeUndefined();
     expect(setJunctionFitting(withElbow, j.uid, 'none').nodes.find((n) => n.uid === j.uid)!.name).toMatch(/^Junction/);
+  });
+});
+
+describe('own loss values', () => {
+  it('replace the calculated losses', () => {
+    const nodes = (f: JunctionFitting) => [node('a', 0, 0), node('j', 100, 0, f), node('b', 100, 100)];
+    const pipes = [pipe('p1', 'a', 'j'), pipe('p2', 'j', 'b')];
+    const elbow = { ...defaultFitting('elbow'), override: { k: 0.9 } };
+    expect(sum(junctionLegLosses(nodes(elbow), pipes), 'p1', 'p2')).toBeCloseTo(0.9, 10);
+    const tn = [node('a', 0, 0), node('j', 100, 0, { ...defaultFitting('tee'), override: { runK: 0.2, branchK: 1.1 } }), node('b', 200, 0), node('c', 100, 100)];
+    const m = junctionLegLosses(tn, [pipe('run1', 'a', 'j'), pipe('run2', 'j', 'b'), pipe('br', 'j', 'c')]);
+    expect(sum(m, 'run1', 'run2')).toBeCloseTo(0.2, 10);
+    expect(sum(m, 'run1', 'br')).toBeCloseTo(1.1, 10);
   });
 });

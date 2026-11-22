@@ -5,7 +5,8 @@
 
 /** Crane fully turbulent friction factor for clean commercial steel, by inside diameter [mm]. */
 export function craneFT(diameterMm: number): number {
-  const table: [number, number][] = [[16, 0.027], [21, 0.025], [27, 0.023], [35, 0.022], [41, 0.021], [53, 0.019], [78, 0.018], [103, 0.017], [129, 0.016], [155, 0.015], [255, 0.014], [410, 0.013]];
+  // upper limit of the inside diameter for each Crane size band: 1/2, 3/4, 1, 1-1/4, 1-1/2, 2, 2-1/2 to 3, 4, 5, 6, 8 to 10, 12 to 16
+  const table: [number, number][] = [[18, 0.027], [23.5, 0.025], [30, 0.023], [38, 0.022], [46, 0.021], [57, 0.019], [90, 0.018], [115, 0.017], [141, 0.016], [178, 0.015], [280, 0.014], [420, 0.013]];
   for (const [d, f] of table) if (diameterMm <= d) return f;
   return 0.012;
 }
@@ -20,24 +21,39 @@ function interpolate(points: readonly [number, number][], x: number): number {
   return points[points.length - 1][1];
 }
 
-export type ElbowStyle = 'standard' | 'long' | 'mitre';
+/** `long` is kept so projects saved with it still open: it reads as a flanged bend with r/D 1.5. */
+export type ElbowStyle = 'standard' | 'flanged' | 'mitre' | 'long';
 
-export const ELBOW_STYLES: { id: ElbowStyle; label: string }[] = [
-  { id: 'standard', label: 'Standard (r/D = 1)' },
-  { id: 'long', label: 'Long radius (r/D = 1.5)' },
+export const ELBOW_STYLES: { id: Exclude<ElbowStyle, 'long'>; label: string }[] = [
+  { id: 'standard', label: 'Standard, threaded (r/D = 1)' },
+  { id: 'flanged', label: 'Flanged or butt-welded (by r/D)' },
   { id: 'mitre', label: 'Mitre' },
 ];
 
-/** L/D of an elbow that turns the flow through `deflectionDeg` (90 = a right-angle elbow, 0 = no turn). */
-const ELBOW_LD: Record<ElbowStyle, [number, number][]> = {
-  standard: [[0, 0], [45, 16], [90, 30], [180, 50]],
-  long: [[0, 0], [45, 11], [90, 20], [180, 34]],
-  mitre: [[0, 0], [15, 4], [30, 8], [45, 15], [60, 25], [90, 60], [180, 90]],
-};
+/** Crane TP-410 p. A-29: K / fT for a flanged or butt-welded 90 degree bend, by bend radius over diameter. */
+export const FLANGED_BEND_NFT: readonly [number, number][] = [[1, 20], [1.5, 14], [2, 12], [3, 12], [4, 14], [6, 17], [8, 24], [10, 30], [12, 34], [14, 38], [16, 42], [20, 50]];
 
-export function elbowK(deflectionDeg: number, style: ElbowStyle, diameterMm: number): number {
+/** Crane TP-410 standard elbows, K / fT by turn angle (45 and 90 degree elbows, 180 degree close-pattern return bend). */
+const STANDARD_ELBOW_NFT: [number, number][] = [[0, 0], [45, 16], [90, 30], [180, 50]];
+/** Crane TP-410 mitre bends, K / fT by turn angle. */
+const MITRE_NFT: [number, number][] = [[0, 0], [15, 4], [30, 8], [45, 15], [60, 25], [75, 40], [90, 60], [180, 90]];
+
+export function flangedBendNft(rOverD: number): number {
+  return interpolate(FLANGED_BEND_NFT, Math.max(1, Math.min(20, rOverD)));
+}
+
+/** K of an elbow that turns the flow through `deflectionDeg` (90 = a right-angle elbow, 0 = no turn). */
+export function elbowK(deflectionDeg: number, style: ElbowStyle, diameterMm: number, rOverD = 1.5): number {
   const d = Math.max(0, Math.min(180, deflectionDeg));
-  return interpolate(ELBOW_LD[style], d) * craneFT(diameterMm);
+  const fT = craneFT(diameterMm);
+  if (style === 'standard') return interpolate(STANDARD_ELBOW_NFT, d) * fT;
+  if (style === 'mitre') return interpolate(MITRE_NFT, d) * fT;
+  const r = style === 'long' ? 1.5 : rOverD;
+  const k90 = flangedBendNft(r) * fT;
+  if (d <= 90) return (k90 * d) / 90;
+  // Crane: K = (n - 1)(0.25 pi fT r/D + 0.5 K90) + K90, with n the number of 90 degree bends
+  const n = d / 90;
+  return (n - 1) * (0.25 * Math.PI * fT * r + 0.5 * k90) + k90;
 }
 
 /** Loss of a tee or wye leg pair: through the run, and into the branch that leaves at `branchAngleDeg` to the run. */
@@ -76,6 +92,10 @@ export interface JunctionFitting {
   branchUid?: string;
   /** Reducer: included cone angle [deg]; 180 = sudden. */
   coneDeg: number;
+  /** Flanged or butt-welded elbow: bend radius over diameter. */
+  rOverD?: number;
+  /** Own loss values, from the maker or the company library. They replace the calculated ones. */
+  override?: { k?: number; runK?: number; branchK?: number };
 }
 
 export const JUNCTION_FITTING_LABELS: Record<JunctionFittingType | 'none', string> = {
@@ -90,7 +110,7 @@ export const JUNCTION_FITTING_LABELS: Record<JunctionFittingType | 'none', strin
 export const LEG_COUNT: Record<JunctionFittingType, number> = { elbow: 2, tee: 3, wye: 3, cross: 4, reducer: 2 };
 
 export function defaultFitting(type: JunctionFittingType): JunctionFitting {
-  return { type, style: 'standard', angleDeg: type === 'elbow' ? 90 : type === 'wye' ? 45 : 90, fromDrawing: type === 'elbow' || type === 'wye', coneDeg: 20 };
+  return { type, style: 'standard', rOverD: 1.5, angleDeg: type === 'elbow' ? 90 : type === 'wye' ? 45 : 90, fromDrawing: type === 'elbow' || type === 'wye', coneDeg: 20 };
 }
 
 interface NodeLike { uid: string; kind: string; x: number; y: number; fitting?: JunctionFitting }
@@ -155,23 +175,23 @@ export function junctionLegLosses(nodes: readonly NodeLike[], pipes: readonly Pi
     if (st.problem || st.legs.length === 0) continue;
     const dmin = Math.min(...st.legs.map((p) => p.diameterMm));
     if (f.type === 'elbow') {
-      const k = elbowK(st.angleDeg ?? 90, f.style, dmin);
+      const k = f.override?.k ?? elbowK(st.angleDeg ?? 90, f.style, dmin, f.rOverD ?? 1.5);
       st.legs.forEach((p) => add(p.uid, k / 2));
     } else if (f.type === 'tee' || f.type === 'wye') {
-      const run = teeRunK(dmin);
-      const branch = teeBranchK(st.angleDeg ?? 90, dmin);
+      const run = f.override?.runK ?? teeRunK(dmin);
+      const branch = f.override?.branchK ?? teeBranchK(st.angleDeg ?? 90, dmin);
       for (const p of st.legs) add(p.uid, p.uid === st.branchUid ? branch - run / 2 : run / 2);
     } else if (f.type === 'cross') {
-      st.legs.forEach((p) => add(p.uid, crossLegK(dmin)));
+      st.legs.forEach((p) => add(p.uid, f.override?.k ?? crossLegK(dmin)));
     } else {
       const [a, b] = st.legs;
-      if (a.diameterMm === b.diameterMm) continue;
-      const small = a.diameterMm < b.diameterMm ? a : b;
+      if (f.override?.k === undefined && a.diameterMm === b.diameterMm) continue;
+      const small = a.diameterMm <= b.diameterMm ? a : b;
       const big = small === a ? b : a;
       // flow runs from the pipe that ends at this node into the pipe that starts there
       const into = a.from === node.uid && b.to === node.uid ? a : b.from === node.uid && a.to === node.uid ? b : undefined;
       const flowIntoSmall = into ? into === small : true;
-      add(small.uid, reducerK(small.diameterMm, big.diameterMm, f.coneDeg, flowIntoSmall ? 'contraction' : 'expansion'));
+      add(small.uid, f.override?.k ?? reducerK(small.diameterMm, big.diameterMm, f.coneDeg, flowIntoSmall ? 'contraction' : 'expansion'));
     }
   }
   return out;
@@ -182,28 +202,37 @@ export function junctionLegLosses(nodes: readonly NodeLike[], pipes: readonly Pi
 export interface ValveType {
   id: string;
   label: string;
-  /** Equivalent length in pipe diameters, fully open. */
-  ld: number;
+  /** Equivalent length in pipe diameters, fully open. Some depend on the valve size. */
+  ld: number | ((diameterMm: number) => number);
   check?: boolean;
+  source: string;
 }
 
+/** Crane bands the butterfly and tilting-disc values by nominal size: 2-8 in, 10-14 in, 16 in and over. */
+const bySize = (small: number, mid: number, large: number) => (d: number) => (d <= 210 ? small : d <= 365 ? mid : large);
+
+const CRANE = 'Crane TP-410, p. A-27 to A-29';
+
 export const VALVE_TYPES: readonly ValveType[] = [
-  { id: 'gate', label: 'Gate valve', ld: 8 },
-  { id: 'globe', label: 'Globe valve', ld: 340 },
-  { id: 'angle', label: 'Angle valve', ld: 150 },
-  { id: 'ball', label: 'Ball valve', ld: 3 },
-  { id: 'butterfly', label: 'Butterfly valve', ld: 40 },
-  { id: 'plug', label: 'Plug valve', ld: 18 },
-  { id: 'swing-check', label: 'Swing check valve', ld: 100, check: true },
-  { id: 'lift-check', label: 'Lift check valve', ld: 600, check: true },
-  { id: 'tilting-check', label: 'Tilting-disc check valve', ld: 30, check: true },
-  { id: 'stop-check', label: 'Stop-check valve', ld: 400, check: true },
-  { id: 'foot', label: 'Foot valve with strainer', ld: 420, check: true },
+  { id: 'gate', label: 'Gate valve', ld: 8, source: CRANE },
+  { id: 'globe', label: 'Globe valve', ld: 340, source: CRANE },
+  { id: 'angle', label: 'Angle valve', ld: 150, source: CRANE },
+  { id: 'ball', label: 'Ball valve, full bore', ld: 3, source: CRANE },
+  { id: 'butterfly', label: 'Butterfly valve', ld: bySize(45, 35, 25), source: CRANE },
+  { id: 'plug', label: 'Plug valve, straight-way', ld: 18, source: CRANE },
+  { id: 'swing-check', label: 'Swing check valve', ld: 100, check: true, source: CRANE },
+  { id: 'lift-check', label: 'Lift check valve (globe type)', ld: 600, check: true, source: CRANE },
+  { id: 'tilting-check', label: 'Tilting-disc check valve, 5°', ld: bySize(40, 30, 20), check: true, source: CRANE },
+  { id: 'stop-check', label: 'Stop-check valve (globe type)', ld: 400, check: true, source: CRANE },
+  { id: 'foot', label: 'Foot valve with strainer, poppet disc', ld: 420, check: true, source: CRANE },
+  { id: 'foot-hinged', label: 'Foot valve with strainer, hinged disc', ld: 75, check: true, source: CRANE },
 ];
+
+const ldOf = (t: { ld: number | ((d: number) => number) }, d: number) => (typeof t.ld === 'function' ? t.ld(d) : t.ld);
 
 export function valveTypeK(id: string, diameterMm: number): number | undefined {
   const t = VALVE_TYPES.find((v) => v.id === id);
-  return t ? t.ld * craneFT(diameterMm) : undefined;
+  return t ? ldOf(t, diameterMm) * craneFT(diameterMm) : undefined;
 }
 
 // ---- fittings library for the pipe editor
@@ -212,33 +241,33 @@ export interface LibraryFitting {
   category: string;
   name: string;
   /** Equivalent length in diameters, or a fixed K. */
-  ld?: number;
+  ld?: number | ((diameterMm: number) => number);
   k?: number;
+  /** Where the value comes from. */
+  source: string;
+  /** A company entry, imported from a file. */
+  custom?: boolean;
 }
 
 export const FITTING_LIBRARY: readonly LibraryFitting[] = [
-  { category: 'Elbows', name: '90° elbow, standard', ld: 30 },
-  { category: 'Elbows', name: '90° elbow, long radius', ld: 20 },
-  { category: 'Elbows', name: '90° elbow, mitre', ld: 60 },
-  { category: 'Elbows', name: '45° elbow, standard', ld: 16 },
-  { category: 'Elbows', name: '45° elbow, mitre', ld: 15 },
-  { category: 'Elbows', name: '180° return bend', ld: 50 },
-  { category: 'Tees', name: 'Tee, flow through run', ld: 20 },
-  { category: 'Tees', name: 'Tee, flow through branch', ld: 60 },
-  { category: 'Tees', name: 'Tee, branch to run, flow combining', ld: 60 },
-  { category: 'Entrances and exits', name: 'Entrance, sharp-edged', k: 0.5 },
-  { category: 'Entrances and exits', name: 'Entrance, slightly rounded', k: 0.25 },
-  { category: 'Entrances and exits', name: 'Entrance, well rounded', k: 0.04 },
-  { category: 'Entrances and exits', name: 'Entrance, projecting inward', k: 0.78 },
-  { category: 'Entrances and exits', name: 'Exit into a tank', k: 1 },
-  ...VALVE_TYPES.map((v) => ({ category: 'Valves, fully open', name: v.label, ld: v.ld })),
-  { category: 'Other', name: 'Strainer, Y-type', ld: 120 },
-  { category: 'Other', name: 'Strainer, basket', k: 2 },
-  { category: 'Other', name: 'Expansion joint', k: 0.2 },
-  { category: 'Other', name: 'Flow meter, turbine', k: 6 },
-  { category: 'Other', name: 'Union or coupling', k: 0.04 },
+  { category: 'Elbows', name: '90° elbow, standard', ld: 30, source: CRANE },
+  ...FLANGED_BEND_NFT.map(([r, n]): LibraryFitting => ({ category: 'Elbows', name: `90° bend, flanged or welded, r/D = ${r}`, ld: n, source: 'Crane TP-410, p. A-29' })),
+  { category: 'Elbows', name: '45° elbow, standard', ld: 16, source: CRANE },
+  { category: 'Elbows', name: '180° return bend, close pattern', ld: 50, source: CRANE },
+  ...MITRE_NFT.filter(([a]) => a > 0 && a < 180).map(([a, n]): LibraryFitting => ({ category: 'Elbows', name: `${a}° mitre bend`, ld: n, source: CRANE })),
+  { category: 'Tees', name: 'Tee, flow through run', ld: 20, source: CRANE },
+  { category: 'Tees', name: 'Tee, flow through branch', ld: 60, source: CRANE },
+  { category: 'Entrances and exits', name: 'Entrance, flush, sharp-edged', k: 0.5, source: CRANE },
+  { category: 'Entrances and exits', name: 'Entrance, inward projecting', k: 0.78, source: CRANE },
+  { category: 'Entrances and exits', name: 'Entrance, rounded r/d = 0.02', k: 0.28, source: CRANE },
+  { category: 'Entrances and exits', name: 'Entrance, rounded r/d = 0.04', k: 0.24, source: CRANE },
+  { category: 'Entrances and exits', name: 'Entrance, rounded r/d = 0.06', k: 0.15, source: CRANE },
+  { category: 'Entrances and exits', name: 'Entrance, rounded r/d = 0.10', k: 0.09, source: CRANE },
+  { category: 'Entrances and exits', name: 'Entrance, rounded r/d 0.15 or more', k: 0.04, source: CRANE },
+  { category: 'Entrances and exits', name: 'Exit into a tank or open air', k: 1, source: CRANE },
+  ...VALVE_TYPES.map((v): LibraryFitting => ({ category: 'Valves, fully open', name: v.label, ld: v.ld, source: v.source })),
 ];
 
 export function fittingK(f: LibraryFitting, diameterMm: number): number {
-  return f.k ?? (f.ld ?? 0) * craneFT(diameterMm);
+  return f.k ?? (f.ld === undefined ? 0 : ldOf({ ld: f.ld }, diameterMm)) * craneFT(diameterMm);
 }

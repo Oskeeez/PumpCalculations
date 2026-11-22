@@ -1,15 +1,7 @@
 import { useRef, useState } from 'react';
 import { addSeries, parsePipeSheet, pipeTemplate, readSheetFile, removeSeries, setStandardSeries, usePipeLibrary } from '../pipeLibrary';
+import { download } from '../download';
 import { useUnits } from '../units';
-
-function download(blob: Blob, name: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 /** The pipe size lists. Company lists come from an Excel or CSV file. */
 export function PipeLibraryPanel() {
