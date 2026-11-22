@@ -28,7 +28,7 @@ export function TopBar(p: Props) {
   return (
     <header className="topbar">
       <h1>Pipe Network Calculator</h1>
-      <small className="build-id" title="Version of this build. Compare it with the latest commit on GitHub to check the live site is up to date.">build {p.buildId}</small>
+      <small className="build-id">build {p.buildId}</small>
       <div className="menu" role="toolbar" aria-label="Project">
         <button onClick={p.onUndo} disabled={!p.canUndo} title="Undo (Ctrl+Z)">↶ Undo</button>
         <button onClick={p.onRedo} disabled={!p.canRedo} title="Redo (Ctrl+Shift+Z)">↷ Redo</button>

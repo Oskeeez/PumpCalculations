@@ -90,7 +90,7 @@ export function PumpCurvesPanel({ curves, pumps, selectedPump, focusId, onChange
     <div className="pc">
       <div className="pc-list">
         <h4>Pump curves</h4>
-        {curves.length === 0 && <p className="hint">None yet. Add one from a datasheet, a spreadsheet or a generic duty point, then pick it on any pump.</p>}
+        {curves.length === 0 && <p className="hint">No curves.</p>}
         <ul>
           {curves.map((c) => (
             <li key={c.id} className={c.id === sel?.id ? 'active' : ''}>
@@ -114,7 +114,6 @@ export function PumpCurvesPanel({ curves, pumps, selectedPump, focusId, onChange
         {mode === 'generate' && (
           <div className="pc-box">
             <h4>Generic curve from a best-efficiency point</h4>
-            <p className="hint">Makes a realistic-shaped curve (head, efficiency, NPSHr) through the point you give. It is a placeholder, not a real product: replace it with the manufacturer's curve for a real design.</p>
             <div className="grid">
               <label className="field"><span>Best-efficiency flow <em>[{U.u('flow')}]</em></span><Cell q="flow" label="BEP flow" value={gen.q} onChange={(v) => v !== undefined && setGen((g) => ({ ...g, q: v }))} /></label>
               <label className="field"><span>Head at that flow <em>[{U.u('head')}]</em></span><Cell q="head" label="BEP head" value={gen.h} onChange={(v) => v !== undefined && setGen((g) => ({ ...g, h: v }))} /></label>
@@ -130,7 +129,7 @@ export function PumpCurvesPanel({ curves, pumps, selectedPump, focusId, onChange
         {mode === 'paste' && (
           <div className="pc-box">
             <h4>{sel ? `Paste points into “${sel.name}”, or make a new curve` : 'Paste points into a new curve'}</h4>
-            <p className="hint">Copy a table from a datasheet, PDF or Excel and paste it. Columns: <b>flow, head, efficiency %</b> (optional), <b>NPSHr</b> (optional). A header row is understood. Flow is read in {U.u('flow')}, head in {U.u('head')}.</p>
+            <p className="hint">Columns: flow, head, efficiency % (optional), NPSHr (optional).</p>
             <textarea rows={7} value={paste} onChange={(e) => setPaste(e.target.value)} placeholder={'Flow\tHead\tEff\tNPSHr\n0\t50\t\t\n10\t46\t60\t1.5\n20\t38\t72\t2.5\n30\t26\t68\t4'} spellCheck={false} />
             {pasteMsg.map((m, i) => <div key={i} className="banner warn">{m}</div>)}
             <div className="toolbar">
@@ -167,7 +166,7 @@ export function PumpCurvesPanel({ curves, pumps, selectedPump, focusId, onChange
             }}
           />
         ) : (
-          mode === 'none' && <div className="pc-box"><p className="hint">Choose “New curve” to type points into a table, “Paste from a table” to bring in a datasheet, or “Generic curve” to start from a duty point.</p></div>
+          mode === 'none' && <div className="pc-box" />
         )}
       </div>
     </div>
@@ -220,13 +219,13 @@ function CurveEditor({ curve, pumps, selectedPump, onChange, onUse, onDuplicate,
       </div>
       <div className="toolbar">
         {selectedPump && (
-          <button className="primary" disabled={selectedPump.curveId === curve.id} onClick={() => onUse(selectedPump.uid, curve.id)} title="Copy this curve onto the pump selected on the canvas">
+          <button className="primary" disabled={selectedPump.curveId === curve.id} onClick={() => onUse(selectedPump.uid, curve.id)}>
             {selectedPump.curveId === curve.id ? `✓ In use on ${selectedPump.name}` : `Use for ${selectedPump.name}`}
           </button>
         )}
         <button onClick={onDuplicate}>Duplicate</button>
         <button onClick={onDelete}>Delete</button>
-        <span className="hint">{used.length ? `Used by: ${used.map((p) => p.name).join(', ')}. Changes here update those pumps.` : 'Not used by any pump yet.'}</span>
+        <span className="hint">{used.length ? `Used by: ${used.map((p) => p.name).join(', ')}.` : 'Not used by any pump yet.'}</span>
       </div>
 
       <div className="table-wrap">

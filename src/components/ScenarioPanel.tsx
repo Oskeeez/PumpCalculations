@@ -51,7 +51,7 @@ export function ScenarioPanel({ scenarios, comparison, onSave, onLoad, onDelete,
         </ul>
       )}
       {scenarios.length === 0 ? (
-        <p className="hint">No saved scenarios.</p>
+        <p className="hint">No scenarios.</p>
       ) : (
         <>
           {comparison.errors.map((e, i) => (e ? <div key={i} className="banner error">{comparison.columns[i]}: {e}</div> : null))}

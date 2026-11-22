@@ -60,7 +60,7 @@ export function NetworkToolbar(p: Props) {
               {p.images.map((im) => <option key={im.id} value={im.id}>{im.name}</option>)}
             </select>
           )}
-          <button className={p.adjustId ? 'active' : ''} aria-pressed={!!p.adjustId} onClick={p.onToggleAdjust} title="Move and zoom the image. Otherwise images cannot be moved or selected.">{p.adjustId ? '✓ Done adjusting' : '🖼 Adjust image'}</button>
+          <button className={p.adjustId ? 'active' : ''} aria-pressed={!!p.adjustId} onClick={p.onToggleAdjust}>{p.adjustId ? '✓ Done adjusting' : '🖼 Adjust image'}</button>
           <button onClick={() => imageInput.current?.click()} title="Add another image">+ Image</button>
         </>
       )}

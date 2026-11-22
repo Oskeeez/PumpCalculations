@@ -22,7 +22,7 @@ describe('valve sizing and pipe rating', () => {
     await s.page.locator('g.edge.valve .edge-line').first().click({ force: true });
     await s.page.locator('label:has-text("Loss by") select').selectOption('orifice');
     await s.page.locator('summary:has-text("Size this orifice")').click();
-    expect(await s.page.locator('.sizing p').nth(1).textContent()).toMatch(/Bore needed:/);
+    expect(await s.page.locator('.sizing p').first().textContent()).toMatch(/Bore needed:/);
     await s.page.getByRole('button', { name: 'Use this bore' }).click();
     // an impossible drop explains itself instead of failing
     const drop = s.page.locator('.sizing .grid input').nth(1);

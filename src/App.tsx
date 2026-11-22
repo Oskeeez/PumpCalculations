@@ -320,7 +320,7 @@ export function App() {
     if (!solveOutcome || solveOutcome.key !== key) return;
     const next = solveOutcome.outcome.project;
     setProject({ ...next, locked: project.locked });
-    setMessage({ kind: 'info', text: `Applied ${solveOutcome.outcome.changes.length} change${solveOutcome.outcome.changes.length === 1 ? '' : 's'}. Undo restores the old design.` });
+    setMessage({ kind: 'info', text: `Applied ${solveOutcome.outcome.changes.length} change${solveOutcome.outcome.changes.length === 1 ? '' : 's'}.` });
     setSolveOutcome(undefined);
   };
   const solveHighlight = useMemo(() => {
@@ -406,19 +406,19 @@ export function App() {
             {multi.size > 1 && (
               <section className="editor">
                 <h3>{multi.size} nodes selected</h3>
-                <p className="hint">Drag one to move them all. Delete removes them and their pipes. Ctrl+C then Ctrl+V copies them with the pipes between them. Click empty space or press Esc to deselect.</p>
+                <p className="hint">Drag to move, Delete to remove, Ctrl+C / Ctrl+V to copy.</p>
               </section>
             )}
             {!hasSide && multi.size <= 1 && (
               <section className="editor empty-side">
                 <h3>Properties</h3>
-                <p className="hint">Nothing selected. Click a node, pipe, valve or pump on the network to edit it here.</p>
+                <p className="hint">Nothing selected.</p>
               </section>
             )}
             {(selNode || selEdge) && (
               <label className="lock-toggle" title="Solve for me leaves this alone">
                 <input type="checkbox" checked={lockedSet.has((selNode ?? selEdge)!.uid)} onChange={() => toggleLock((selNode ?? selEdge)!.uid)} />
-                <span>🔒 Don't change this when solving for me</span>
+                <span>🔒 Lock (solver leaves it alone)</span>
               </label>
             )}
             {selNode && <NodeEditor node={selNode} onChange={edit.updateNode} />}
@@ -456,7 +456,7 @@ export function App() {
                 project={project}
                 edge={selEdge}
                 locked={lockedSet}
-                onApply={(next, text) => { setProject({ ...next, locked: project.locked }); setMessage({ kind: 'info', text: `Applied: ${text}. Undo restores the old value.` }); }}
+                onApply={(next, text) => { setProject({ ...next, locked: project.locked }); setMessage({ kind: 'info', text: `Applied: ${text}.` }); }}
               />
             )}
           </div>
@@ -486,7 +486,7 @@ export function App() {
       case 'results':
         return <Results computed={computed} onSelectName={selectByName} />;
       case 'pumpchart':
-        return chart ? <div className="chart" style={{ aspectRatio: `${CHART_W} / ${CHART_H}` }} dangerouslySetInnerHTML={{ __html: chart.screen }} /> : <p className="hint">Add a pump to see its curve and operating point.</p>;
+        return chart ? <div className="chart" style={{ aspectRatio: `${CHART_W} / ${CHART_H}` }} dangerouslySetInnerHTML={{ __html: chart.screen }} /> : <p className="hint">No pump.</p>;
       case 'targets':
         return (
           <>

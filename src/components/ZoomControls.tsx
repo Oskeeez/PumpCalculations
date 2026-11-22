@@ -26,12 +26,12 @@ export function ZoomControls({ onZoom, onFit, symbolScale, onSymbolScale, labels
       <button aria-label="Zoom out" title="Zoom out (or scroll down over the network)" onClick={() => onZoom(1 / 1.3)}>−</button>
       <button aria-label="Fit the network to the window" title="Fit the whole network in the window" className="wide" onClick={onFit}>Fit</button>
       <span className="zsep" />
-      <button aria-label="Smaller symbols" title="Make nodes, valves, pumps and labels smaller. The zoom does not change." onClick={() => onSymbolScale(1 / 1.2)} disabled={symbolScale <= SYM_MIN + 1e-9}>A−</button>
-      <button aria-label="Larger symbols" title="Make nodes, valves, pumps and labels larger. The zoom does not change." onClick={() => onSymbolScale(1.2)} disabled={symbolScale >= SYM_MAX - 1e-9}>A+</button>
+      <button aria-label="Smaller symbols" title="Smaller symbols" onClick={() => onSymbolScale(1 / 1.2)} disabled={symbolScale <= SYM_MIN + 1e-9}>A−</button>
+      <button aria-label="Larger symbols" title="Larger symbols" onClick={() => onSymbolScale(1.2)} disabled={symbolScale >= SYM_MAX - 1e-9}>A+</button>
       <span className="zsep" />
       <button className="wide" aria-label={`Labels: ${LABEL_TEXT[labels]}. Click to change.`} title={`Labels: ${LABEL_TEXT[labels]}. Click to cycle: names and results, names only, none.`} onClick={onLabels}>{labels === 'full' ? 'Labels' : labels === 'names' ? 'Names' : 'No labels'}</button>
       <button className={`wide ${grid ? 'on' : ''}`} aria-pressed={grid} aria-label="Show the grid" title="Show or hide the grid" onClick={onGrid}>Grid</button>
-      <button className={`wide ${snap ? 'on' : ''}`} aria-pressed={snap} aria-label="Snap to the grid" title="Snap nodes to the 10 px grid while placing and dragging (off = free placement)" onClick={onSnap}>Snap</button>
+      <button className={`wide ${snap ? 'on' : ''}`} aria-pressed={snap} aria-label="Snap to the grid" title="Snap to grid" onClick={onSnap}>Snap</button>
     </div>
   );
 }

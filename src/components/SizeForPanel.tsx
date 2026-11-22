@@ -27,7 +27,7 @@ function settingsFor(e: EdgeUI): { settings: SolveSettings; what: string } {
 
 /** "Size this for a flow or a pressure": changes only the selected item, using the same search as Solve for me. */
 export function SizeForPanel({ project, edge, locked, onApply }: { project: ProjectUI; edge: EdgeUI; locked: ReadonlySet<string>; onApply: (p: ProjectUI, summary: string) => void }) {
-  const { settings, what } = settingsFor(edge);
+  const { settings } = settingsFor(edge);
   const [mode, setMode] = useState<'flow' | 'pressure'>('pressure');
   const [nodeUid, setNodeUid] = useState(edge.to);
   const [flowLps, setFlowLps] = useState(5);
@@ -51,7 +51,7 @@ export function SizeForPanel({ project, edge, locked, onApply }: { project: Proj
 
   return (
     <details className="sizing size-for">
-      <summary>Size this for a flow or pressure ({what})</summary>
+      <summary>Size for flow or pressure</summary>
       <div className="grid">
         <label className="field"><span>Goal</span>
           <select value={mode} onChange={(e) => { setMode(e.target.value as 'flow' | 'pressure'); setOutcome(undefined); }}>
@@ -70,8 +70,8 @@ export function SizeForPanel({ project, edge, locked, onApply }: { project: Proj
       {outcome && (
         <>
           <div className={`banner ${ok ? 'ok' : 'warn'}`}>
-            {outcome.status === 'already-passing' ? 'Already meets this goal. Nothing to change.' : ok ? 'This item can meet the goal.' : outcome.status === 'nothing-allowed' ? 'This item cannot be changed (it, or a node it joins, is locked, or it has no other sizes to try).' : 'This item alone cannot meet the goal. Closest it can get is shown.'}
-            {outcome.after[0] && <> Result: {outcome.after[0].text}.</>}
+            {outcome.status === 'already-passing' ? 'Already met.' : ok ? 'Goal can be met.' : outcome.status === 'nothing-allowed' ? 'Cannot change (locked, or no other sizes).' : 'Goal not reachable. Closest result shown.'}
+            {outcome.after[0] && <> {outcome.after[0].text}</>}
           </div>
           {outcome.changes.map((c) => <p key={c.parameter}>{c.parameter}: {c.from} → <b>{c.to}</b></p>)}
           {outcome.changes.length > 0 && <button onClick={() => { onApply(outcome.project, `${edge.name}: ${outcome.changes.map((c) => `${c.parameter} ${c.to}`).join(', ')}`); setOutcome(undefined); }}>Apply</button>}

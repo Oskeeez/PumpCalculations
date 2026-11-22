@@ -24,8 +24,7 @@ export function ReportPanel({ project, computed, targets, buildId }: Props) {
   return (
     <div className="report-panel">
       <div className="toolbar">
-        <button className="primary" onClick={() => printHtml(html)} title="Open the print dialog (choose Save as PDF to make a PDF)">🖨 Print / save as PDF</button>
-        <span className="hint">Shows the current results in the units you have selected.</span>
+        <button className="primary" onClick={() => printHtml(html)}>🖨 Print / save as PDF</button>
       </div>
       <div className="report-preview" dangerouslySetInnerHTML={{ __html: html }} />
     </div>

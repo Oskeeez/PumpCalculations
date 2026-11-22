@@ -162,7 +162,6 @@ export function AiPanel({ main, drafts, activeDraftId, settings, onSettings, cri
         <p className="hint">The key is sent only to api.anthropic.com from your browser. Anyone with access to this browser profile could read it, so use a key you can revoke.</p>
         <details>
           <summary>Design criteria (company standards)</summary>
-          <p className="hint">Limits and defaults the AI follows, and the rates for the rough cost. The values shipped are generic placeholders.</p>
           <textarea className="code" rows={14} value={critText} onChange={(e) => setCritText(e.target.value)} spellCheck={false} />
           <div className="toolbar">
             <button onClick={applyCriteria}>Save criteria</button>
@@ -182,14 +181,12 @@ export function AiPanel({ main, drafts, activeDraftId, settings, onSettings, cri
 
       <section className="panel">
         <h3>1. Generate a network from a description</h3>
-        <p className="hint">Describe the system, flows and pressures. The AI builds a <b>draft</b> (your current network is not touched), lists its assumptions, and you accept or reject it item by item in the Drafts tab.</p>
         <textarea rows={4} value={description} placeholder="e.g. Pump water from a ground tank to three taps on the first floor, 2 L/s each, at least 150 kPa at each tap. 6 m static lift, about 40 m of pipe." onChange={(e) => setDescription(e.target.value)} />
         <div className="toolbar"><button className="primary" disabled={!hasKey || !!busy || !description.trim()} onClick={generate}>Generate draft</button></div>
       </section>
 
       <section className="panel">
         <h3>2. Solve with AI</h3>
-        <p className="hint">Checks your current network against your targets, then proposes fixes as separate drafts. The solver decides what passes.</p>
         <div className="toolbar">
           <label><input type="radio" checked={mode === 'ideas'} onChange={() => setMode('ideas')} /> Ideas first (I pick)</label>
           <label><input type="radio" checked={mode === 'all'} onChange={() => setMode('all')} /> Solve every way</label>
@@ -223,7 +220,6 @@ export function AiPanel({ main, drafts, activeDraftId, settings, onSettings, cri
 
       <section className="panel">
         <h3>3. Chat</h3>
-        <p className="hint">Ask why something happens or ask for a change ("add a bypass around that valve"). Changes always go into a draft{activeDraftId ? ' (the one open in the Drafts tab)' : ''}.</p>
         <div className="chat">
           {chatLines.map((l, i) => (
             <div key={i} className={`bubble ${l.role}`}>
@@ -241,7 +237,6 @@ export function AiPanel({ main, drafts, activeDraftId, settings, onSettings, cri
 
       <details className="panel">
         <summary>Run log ({log.length} entries)</summary>
-        <p className="hint">Every tool call, solver run and model turn, for auditing.</p>
         <div className="toolbar"><button disabled={!log.length} onClick={downloadLog}>Download log (JSON)</button><button disabled={!log.length} onClick={() => setLog([])}>Clear</button></div>
         <ol className="runlog">
           {log.map((l, i) => (

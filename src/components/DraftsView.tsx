@@ -38,7 +38,7 @@ export function DraftsView({ main, drafts, criteria, tab, onTab, onAccept, onDis
           );
         })}
       </nav>
-      {live.length === 0 && <p className="hint">No drafts yet. Use the AI assistant tab to generate or solve with AI, and the drafts appear here.</p>}
+      {live.length === 0 && <p className="hint">No drafts.</p>}
       {tab === 'compare' || !draft ? <Comparison columns={columns} /> : <DraftDetail main={main} draft={draft} column={columns.find((c) => c.id === draft.id)!} onAccept={onAccept} onDiscard={onDiscard} />}
     </div>
   );
@@ -163,7 +163,7 @@ function DraftDetail({ main, draft, column, onAccept, onDiscard }: { main: Proje
         </div>
         <div className="draft-side">
           <h4>Changes ({items.length})</h4>
-          {items.length === 0 && <p className="hint">No changes against the parent.</p>}
+          {items.length === 0 && <p className="hint">No changes.</p>}
           <ul className="diff-list">
             {items.map((i) => (
               <li key={i.key} className={`diff ${i.kind}`}>

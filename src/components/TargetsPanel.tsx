@@ -87,8 +87,7 @@ export function TargetsPanel({ project, targets, statuses, onChange, pickId, onP
 
   return (
     <div className="targets">
-      <p className="hint">Pressures are gauge.</p>
-      {targets.length === 0 && <p className="hint">No targets yet. Add one below.</p>}
+      {targets.length === 0 && <p className="hint">No targets.</p>}
       {targets.map((t) => {
         const s = stat(t.id);
         return (

@@ -40,13 +40,13 @@ function Ends({ from, to, onSwap }: { from: string; to: string; onSwap: () => vo
   return (
     <p className="ends">
       <b>{from}</b> → <b>{to}</b>
-      <button onClick={onSwap} title="Reverse the positive flow direction">⇄ Swap direction</button>
+      <button onClick={onSwap}>⇄ Swap direction</button>
     </p>
   );
 }
 
 /** Prominent flow-direction control for a pump or a directional valve. */
-function Direction({ inLabel, outLabel, from, to, onSwap, note }: { inLabel: string; outLabel: string; from: string; to: string; onSwap: () => void; note?: string }) {
+function Direction({ inLabel, outLabel, from, to, onSwap }: { inLabel: string; outLabel: string; from: string; to: string; onSwap: () => void }) {
   return (
     <div className="direction">
       <div className="dir-row">
@@ -54,8 +54,7 @@ function Direction({ inLabel, outLabel, from, to, onSwap, note }: { inLabel: str
         <div className="dir-arrow" aria-hidden="true">━━▶</div>
         <div className="dir-end"><small>{outLabel}</small><b>{to}</b></div>
       </div>
-      <button className="primary" onClick={onSwap} title="Swap the two ends so the flow runs the other way">⇄ Reverse direction</button>
-      {note && <small className="hint">{note}</small>}
+      <button className="primary" onClick={onSwap}>⇄ Reverse direction</button>
     </div>
   );
 }
@@ -119,7 +118,7 @@ export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: 
       <div className="grid">
         <div className="field opt">
           <label><input type="checkbox" checked={pipe.ratingKPaG !== undefined} onChange={(e) => onChange({ ...pipe, ratingKPaG: e.target.checked ? 1000 : undefined })} /> Pressure rating (gauge)</label>
-          {pipe.ratingKPaG !== undefined && <PressureField value={pipe.ratingKPaG} onChange={(v) => v > 0 && onChange({ ...pipe, ratingKPaG: v })} title="An alert is raised when the pressure at either end of this pipe is higher" label="Rating" />}
+          {pipe.ratingKPaG !== undefined && <PressureField value={pipe.ratingKPaG} onChange={(v) => v > 0 && onChange({ ...pipe, ratingKPaG: v })} label="Rating" />}
         </div>
       </div>
       <h4>Fittings (K values), total K = {total.toFixed(2)}</h4>
@@ -191,7 +190,6 @@ function SizingHelper({ valve, onChange, designFlowLps, density }: { valve: Valv
   return (
     <details className="sizing">
       <summary>Size this {orifice ? 'orifice' : 'valve'}</summary>
-      <p className="hint">Enter the flow it must pass and the pressure it should burn. The calculation uses the fluid density ({U.fu('density', density, 0)}).</p>
       <div className="grid">
         <NumField label="Design flow" q="flow" value={flow} onChange={(v) => v > 0 && setFlow(v)} />
         <PressureField label={orifice ? 'Permanent pressure loss' : 'Pressure drop'} value={drop} onChange={(v) => v > 0 && setDrop(v)} />
@@ -209,7 +207,7 @@ export function ValveEditor({ valve, from, to, onChange, designFlowLps = 0, dens
       <h3>Valve</h3>
       <NameField value={valve.name} onChange={(name) => onChange({ ...valve, name })} />
       {valve.checkValve || valve.controlType !== 'none' ? (
-        <Direction inLabel="IN" outLabel="OUT" from={from} to={to} onSwap={() => onChange({ ...valve, from: valve.to, to: valve.from })} note="Check valves and regulators only pass flow from IN to OUT." />
+        <Direction inLabel="IN" outLabel="OUT" from={from} to={to} onSwap={() => onChange({ ...valve, from: valve.to, to: valve.from })} />
       ) : (
         <Ends from={from} to={to} onSwap={() => onChange({ ...valve, from: valve.to, to: valve.from })} />
       )}
@@ -243,7 +241,7 @@ export function ValveEditor({ valve, from, to, onChange, designFlowLps = 0, dens
         {valve.lossType === 'orifice' ? (
           <>
             <NumField label="Bore diameter" q="diameter" value={valve.lossValue} onChange={(v) => onChange({ ...valve, lossValue: v })} />
-            <NumField label="Discharge coeff. Cd" unit="–" value={valve.orificeCd ?? 0.61} onChange={(v) => onChange({ ...valve, orificeCd: v })} title="0.61 is typical for a sharp-edged plate at high Reynolds number" />
+            <NumField label="Discharge coeff. Cd" unit="–" value={valve.orificeCd ?? 0.61} onChange={(v) => onChange({ ...valve, orificeCd: v })} />
           </>
         ) : (
           <NumField label={valve.lossType} unit={unit} value={valve.lossValue} onChange={(v) => onChange({ ...valve, lossValue: v })} />
@@ -377,7 +375,7 @@ export function PumpEditor({ pump, from, to, onChange, headFitRmse, curves, onAs
     <section className="editor">
       <h3>Pump</h3>
       <NameField value={pump.name} onChange={(name) => onChange({ ...pump, name })} />
-      <Direction inLabel="SUCTION (in)" outLabel="DISCHARGE (out)" from={from} to={to} onSwap={() => onChange({ ...pump, from: pump.to, to: pump.from })} note="A pump only pushes flow from suction to discharge; flow cannot run backwards through it." />
+      <Direction inLabel="SUCTION (in)" outLabel="DISCHARGE (out)" from={from} to={to} onSwap={() => onChange({ ...pump, from: pump.to, to: pump.from })} />
       <div className="curve-pick">
         <label className="field">
           <span>Pump curve</span>
@@ -387,11 +385,9 @@ export function PumpEditor({ pump, from, to, onChange, headFitRmse, curves, onAs
           </select>
         </label>
         <div className="toolbar">
-          <button onClick={onManageCurves} title="Open the pump curve library to add, paste or edit curves">Add / edit curves…</button>
+          <button onClick={onManageCurves}>Add / edit curves…</button>
           {!lib && <button onClick={onSaveCurve} title="Save this pump's points as a reusable curve">Save to library</button>}
         </div>
-        {curves.length === 0 && <p className="hint">No saved curves yet. “Add / edit curves…” lets you paste a datasheet table or generate one.</p>}
-        {lib && <p className="hint">Using “{lib.name}”. Edit it in the library and every pump using it updates.</p>}
       </div>
       <PumpControlSection pump={pump} onChange={onChange} nodes={nodes} onPickNode={onPickNode} pickActive={pickActive} solvedSpeed={solvedSpeed} />
       <div className="grid">

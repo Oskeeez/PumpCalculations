@@ -98,7 +98,7 @@ describe('view options, find, help', () => {
     await s.page.locator('body').click({ position: { x: 5, y: 600 } });
     await s.page.keyboard.press('?');
     expect(await count(s.page, '.modal')).toBe(1);
-    expect(await s.page.locator('.modal').textContent()).toMatch(/Shift \+ drag on empty space/);
+    expect(await s.page.locator('.modal').textContent()).toMatch(/Box select/);
     await s.close();
   });
 });

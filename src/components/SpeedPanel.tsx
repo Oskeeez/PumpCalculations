@@ -38,7 +38,7 @@ export function SpeedPanel({ pumps, config, onConfig, sweep, pickId, onPick }: P
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sweep, U.system],
   );
-  if (pumps.length === 0) return <p className="hint">No pumps in the network.</p>;
+  if (pumps.length === 0) return <p className="hint">No pumps.</p>;
   const num = (v: number | undefined, d = 1) => (v === undefined || !Number.isFinite(v) ? '–' : v.toFixed(d));
   return (
     <div>

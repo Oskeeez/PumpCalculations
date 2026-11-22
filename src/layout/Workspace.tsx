@@ -177,7 +177,7 @@ function GroupView({ group, ctx }: { group: Group; ctx: Ctx }) {
             aria-selected={p === group.active}
             className={`ws-tab ${p === group.active ? 'active' : ''}`}
             draggable
-            title="Drag to move this panel; drop on a tile's edge to dock it beside, or in the middle to add it as a tab"
+            title="Drag to move"
             onClick={() => ctx.apply(setActive(ctx.layoutRef.current, group.id, p))}
             onDragStart={(e) => {
               e.dataTransfer.setData('text/plain', p);
@@ -187,7 +187,7 @@ function GroupView({ group, ctx }: { group: Group; ctx: Ctx }) {
             onDragEnd={() => { ctx.setDragging(null); setZone(null); }}
           >
             <span>{PANEL_TITLES[p]}{ctx.badge?.(p) ? ` ${ctx.badge(p)}` : ''}</span>
-            <button className="ws-x" aria-label={`Close ${PANEL_TITLES[p]}`} title="Close this panel (re-open it from the Panels menu or the + button)" onClick={(e) => { e.stopPropagation(); ctx.apply(closePanel(ctx.layoutRef.current, p)); }}>×</button>
+            <button className="ws-x" aria-label={`Close ${PANEL_TITLES[p]}`} title="Close" onClick={(e) => { e.stopPropagation(); ctx.apply(closePanel(ctx.layoutRef.current, p)); }}>×</button>
           </div>
         ))}
         <button className="ws-max" aria-label={ctx.maxId === group.id ? 'Restore the tile size' : 'Maximise this tile'} title={ctx.maxId === group.id ? 'Restore the tile (Esc)' : 'Fill the whole workspace with this tile'} onClick={() => ctx.toggleMax(group.id)}>{ctx.maxId === group.id ? '❐' : '⤢'}</button>
