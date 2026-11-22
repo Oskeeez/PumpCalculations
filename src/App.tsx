@@ -20,6 +20,7 @@ import { SpeedPanel, type SpeedConfig } from './components/SpeedPanel';
 import { TargetsPanel } from './components/TargetsPanel';
 import { SolvePanel } from './components/SolvePanel';
 import { parseInp, toInp } from './epanet';
+import { parsePcf } from './pcf';
 import { download } from './download';
 import { PipeLibraryPanel } from './components/PipeLibraryPanel';
 import { FittingLibraryPanel } from './components/FittingLibraryPanel';
@@ -221,6 +222,9 @@ export function App() {
       if (/\.inp$/i.test(file.name)) {
         const r = parseInp(text);
         replaceProject(r.project, `Imported ${file.name}: ${r.project.nodes.length} nodes, ${r.project.edges.length} links.${r.notes.length ? ' ' + r.notes.join(' ') : ''}`);
+      } else if (/\.pcf$/i.test(file.name)) {
+        const r = parsePcf(text);
+        replaceProject(r.project, `Imported ${file.name}: ${r.project.nodes.length} nodes, ${r.project.edges.length} components. ${r.notes.join(' ')}`);
       } else {
         replaceProject(parseProject(text), `Opened ${file.name}.`);
       }
