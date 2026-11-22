@@ -4,7 +4,7 @@
  * Invariants kept by `normalize`: a panel appears at most once, groups are never empty, splits have at least two children,
  * a split never directly contains a split of the same direction, and sizes sum to 1.
  */
-export type PanelId = 'network' | 'properties' | 'solve' | 'pumpcurves' | 'pipelib' | 'fittinglib' | 'results' | 'pumpchart' | 'profile' | 'targets' | 'scale' | 'speed' | 'scenarios' | 'report' | 'view3d' | 'coords3d' | 'ai' | 'drafts';
+export type PanelId = 'network' | 'properties' | 'solve' | 'pumpcurves' | 'pipelib' | 'fittinglib' | 'results' | 'pumpchart' | 'profile' | 'targets' | 'scale' | 'speed' | 'scenarios' | 'report' | 'validation' | 'view3d' | 'coords3d' | 'ai' | 'drafts';
 
 export const PANEL_TITLES: Record<PanelId, string> = {
   network: 'Network',
@@ -20,6 +20,7 @@ export const PANEL_TITLES: Record<PanelId, string> = {
   scale: 'Scale & images',
   speed: 'Speed analysis',
   scenarios: 'Scenarios',
+  validation: 'Validation',
   report: 'Report',
   view3d: '3D view',
   coords3d: '3D coordinates',
@@ -232,7 +233,7 @@ export function presetLayout(id: PresetId): LayoutNode {
       return split('row', [[0.4, group(['network', 'view3d', 'coords3d'], 'network')], [0.3, group(['ai', 'properties', 'solve', 'pumpcurves', 'pipelib', 'fittinglib', 'targets', 'scale'], 'ai')], [0.3, group(['drafts', 'results', 'pumpchart', 'profile', 'speed', 'scenarios', 'report'], 'drafts')]]);
     default:
       return split('row', [
-        [0.68, split('col', [[0.68, group(['network'])], [0.32, group(['results', 'pumpchart', 'profile', 'speed', 'scenarios', 'report', 'view3d', 'coords3d'], 'results')]])],
+        [0.68, split('col', [[0.68, group(['network'])], [0.32, group(['results', 'pumpchart', 'profile', 'speed', 'scenarios', 'report', 'validation', 'view3d', 'coords3d'], 'results')]])],
         [0.32, group(['properties', 'solve', 'pumpcurves', 'pipelib', 'fittinglib', 'targets', 'scale', 'ai', 'drafts'], 'properties')],
       ]);
   }

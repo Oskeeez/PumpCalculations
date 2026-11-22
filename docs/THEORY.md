@@ -142,6 +142,9 @@ Velocity above the limit set in the top bar (0 = off) is flagged on pipes and va
 
 ## How it is checked
 
+See `docs/VALIDATION.md` for the validation pack, which also runs in the app's Validation panel.
+
+
 - Hand calculations and published values for friction factors (Moody chart points), orifice coefficients, Cv/Kv conversions, affinity laws and pump operating points.
 - EPANET 2.2 cross-checks (`tests/validation/`): Net1 with Hazen–Williams (heads within 1.3e-5 ft) and with Darcy–Weisbach; and a second set covering pressure-reducing, pressure-sustaining and flow-control valves, a throttle valve, check valves (blocking and passing) and single and parallel pumps. Pipes in EPANET use the Swamee–Jain formula and here Colebrook–White, so flows agree to about 1 % at normal velocities and the tests allow for that.
 - Round-trip of the Excel export: every formula in the exported workbook is recalculated with an independent engine and compared with the solver.

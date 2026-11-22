@@ -23,6 +23,7 @@ import { parseInp, toInp } from './epanet';
 import { parsePcf } from './pcf';
 import { systemCurve } from './systemCurve';
 import { ProfilePanel } from './components/ProfilePanel';
+import { ValidationPanel } from './components/ValidationPanel';
 import { download } from './download';
 import { PipeLibraryPanel } from './components/PipeLibraryPanel';
 import { FittingLibraryPanel } from './components/FittingLibraryPanel';
@@ -515,6 +516,8 @@ export function App() {
         );
       case 'fittinglib':
         return <FittingLibraryPanel />;
+      case 'validation':
+        return <ValidationPanel buildId={typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev'} />;
       case 'pipelib':
         return <PipeLibraryPanel />;
       case 'pumpcurves':

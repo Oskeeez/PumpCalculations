@@ -164,3 +164,18 @@ describe('boundaries', () => {
     await s.close();
   });
 });
+
+describe('validation pack', () => {
+  it('runs in the browser and every case passes', async () => {
+    const s = await open(app);
+    await s.page.getByRole('button', { name: /^Panels/ }).click();
+    const check = s.page.locator('.ws-check:has-text("Validation") input');
+    if (!(await check.isChecked())) await check.check();
+    await s.page.keyboard.press('Escape');
+    await s.page.locator('.ws-tab', { hasText: 'Validation' }).first().click();
+    await s.page.getByRole('button', { name: 'Run validation' }).click();
+    await expect.poll(() => s.page.locator('.validation .banner').textContent()).toMatch(/10 of 10 cases pass/);
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+});
