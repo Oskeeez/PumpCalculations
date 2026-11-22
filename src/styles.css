@@ -450,3 +450,8 @@ body.ws-resizing-row { cursor: row-resize; user-select: none; }
 .lock-toggle { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; margin-bottom: 6px; }
 .lock-toggle input { width: auto; margin-top: 3px; }
 .canvas .lock { font-size: 13px; pointer-events: none; }
+
+/* profile */
+.profile-chart { width: 100%; height: auto; max-height: 60vh; }
+.pick-row { display: flex; gap: 4px; }
+.pick-row select { flex: 1; }

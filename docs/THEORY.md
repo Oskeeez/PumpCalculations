@@ -91,6 +91,12 @@ A pump is fitted at rated speed with a least-squares quadratic through the head 
 
 **Variable-speed control**: instead of typing a speed ratio, a pump can hold a flow through itself, or the gauge pressure at a chosen node. The solver is not changed; a wrapper searches the speed ratio between a slowest and fastest limit with Brent's method, re-solving the whole network each time (the held quantity rises with speed). The speed it finds is shown. If the target is out of reach, the pump runs at the limit that gets closest and a note says so; this is not an error. With several controlled pumps each is adjusted in turn until the speeds stop changing. A speed sweep ignores the control so that every speed is really tried. Control finds a steady-state operating point: it does not model the drive's response over time.
 
+## System curve and HGL profile
+
+**System curve** (on the pump chart, dashed): the head the rest of the network needs across a pump for each flow through it, with the other pumps at their solved speeds. Each point is a full network solution with that pump replaced by a very stiff element that holds the flow; the flow actually reached and the head across it are plotted, so each point is an exact solution. Where the system curve crosses the pump curve is the operating point. It is drawn while the pump chart is on screen, for up to four pumps and networks of up to 400 links.
+
+**HGL profile**: the shortest path by pipe length between two chosen nodes, with elevation, hydraulic grade (head) and energy grade (head plus the velocity head of the line leaving each node) against distance. Pumps and valves have no length, so they show as steps.
+
 ## Sizing helpers
 
 - **Control valve**: `Cv = Q[gpm] / sqrt(dP[psi] / SG)` and `Kv = Q[m3/h] / sqrt(dP[bar] / SG)`, with `SG = rho / 999`. This is the flow coefficient needed fully open; it does not size for travel, noise or cavitation limits.

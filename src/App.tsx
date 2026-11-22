@@ -21,6 +21,8 @@ import { TargetsPanel } from './components/TargetsPanel';
 import { SolvePanel } from './components/SolvePanel';
 import { parseInp, toInp } from './epanet';
 import { parsePcf } from './pcf';
+import { systemCurve } from './systemCurve';
+import { ProfilePanel } from './components/ProfilePanel';
 import { download } from './download';
 import { PipeLibraryPanel } from './components/PipeLibraryPanel';
 import { FittingLibraryPanel } from './components/FittingLibraryPanel';
@@ -97,7 +99,17 @@ export function App() {
   const computed = useMemo(() => compute(project), [key]);
 
   // pump curve chart (screen: selected unit system; Excel export: always SI to match the sheets)
-  const chartSeries = computed.pumpCurves.map((c) => ({ name: c.name, pts: c.pts, op: c.op }));
+  const pumpChartOpen = groupOfPanel(layout, 'pumpchart')?.active === 'pumpchart';
+  // the system curve each pump sees (each point is a network solution, so only while the chart is on screen)
+  const systemCurves = useMemo(
+    () =>
+      pumpChartOpen && computed.model && computed.result?.converged && project.edges.length <= 400
+        ? computed.pumpCurves.slice(0, 4).map((c) => ({ name: `${c.name} system`, pts: systemCurve(computed.model!, computed.result, c.name, Math.max(...c.pts.map((x) => x.q)), 16), dashed: true }))
+        : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [computed, pumpChartOpen],
+  );
+  const chartSeries = [...computed.pumpCurves.map((c) => ({ name: c.name, pts: c.pts, op: c.op })), ...systemCurves.filter((s) => s.pts.length > 1)];
   const axes = useMemo(
     () => ({ flowLabel: units.u('flow'), headLabel: units.u('head'), flowFactor: unitFactor('flow', unitSystem), headFactor: unitFactor('head', unitSystem) }),
     [units, unitSystem],
@@ -105,7 +117,7 @@ export function App() {
   const chart = useMemo(
     () => (chartSeries.length ? { screen: pumpChartSvg(chartSeries, SCREEN_THEME, axes), exportSvg: pumpChartSvg(chartSeries, EXPORT_THEME, SI_AXES) } : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [computed, axes],
+    [computed, axes, systemCurves],
   );
 
   /** True when a panel is the visible tab of its tile. Heavy secondary calculations only run for panels that can be seen. */
@@ -408,7 +420,7 @@ export function App() {
         pick={pick ?? undefined}
         locked={lockedSet}
         highlight={solveHighlight}
-        onPick={(uid) => { const back = pick?.id.startsWith('speed') ? 'speed' : pick?.id.startsWith('pumpctl') ? 'properties' : 'targets'; pick?.apply(uid); setPick(null); setLayout((l) => activatePanel(l, back)); }}
+        onPick={(uid) => { const back = pick?.id.startsWith('speed') ? 'speed' : pick?.id.startsWith('profile') ? 'profile' : pick?.id.startsWith('pumpctl') ? 'properties' : 'targets'; pick?.apply(uid); setPick(null); setLayout((l) => activatePanel(l, back)); }}
         onPickCancel={() => setPick(null)}
       />
     </div>
@@ -509,6 +521,8 @@ export function App() {
         return <PumpCurvesPanel curves={lib.curves} pumps={pumpEdges} selectedPump={selEdge?.kind === 'pump' ? selEdge : undefined} focusId={lib.curveFocus} onChange={lib.updateCurves} onUse={lib.assignCurve} />;
       case 'results':
         return <Results computed={computed} onSelectName={selectByName} />;
+      case 'profile':
+        return <ProfilePanel project={project} result={computed.result} pickId={pick?.id} onPick={startPick} />;
       case 'pumpchart':
         return chart ? <div className="chart" style={{ aspectRatio: `${CHART_W} / ${CHART_H}` }} dangerouslySetInnerHTML={{ __html: chart.screen }} /> : <p className="hint">No pump.</p>;
       case 'targets':

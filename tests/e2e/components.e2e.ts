@@ -108,3 +108,20 @@ describe('EPANET files', () => {
     await s.close();
   });
 });
+
+describe('plots', () => {
+  it('draws the system curve on the pump chart and an HGL profile between two nodes', async () => {
+    const s = await open(app);
+    await s.page.locator('.ws-tab', { hasText: 'Pump curve' }).first().click();
+    await expect.poll(() => s.page.locator('.chart polyline[stroke-dasharray]').count()).toBeGreaterThan(0);
+    expect(await s.page.locator('.chart text', { hasText: /system/ }).count()).toBeGreaterThan(0);
+    await s.page.locator('.ws-tab', { hasText: 'HGL profile' }).first().click();
+    const tankOptions = await s.page.getByLabel('Profile from').locator('option').allTextContents();
+    await s.page.getByLabel('Profile to').selectOption({ label: tankOptions[tankOptions.length - 1] });
+    await s.page.getByLabel('Profile from').selectOption({ label: tankOptions[0] });
+    await expect.poll(() => s.page.locator('svg.profile-chart polyline').count()).toBe(3);
+    expect(await s.page.locator('.profile tbody tr').count()).toBeGreaterThan(1);
+    expect(s.errors).toEqual([]);
+    await s.close();
+  });
+});
