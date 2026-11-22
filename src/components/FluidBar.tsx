@@ -37,6 +37,12 @@ export function FluidBar({ project, computed, onFluid, onSetting }: Props) {
       ) : (
         <NumField label="Temperature" q="temperature" value={project.temperatureC} onChange={(v) => onSetting({ temperatureC: v }, 'temp')} title={`${units.f('temperature', info.tMinC, 0)} to ${units.fu('temperature', info.tMaxC, 0)}`} />
       )}
+      <label className="field"><span>Friction</span>
+        <select aria-label="Friction method" value={project.frictionMethod ?? 'dw'} onChange={(e) => onSetting({ frictionMethod: e.target.value === 'hw' ? 'hw' : undefined }, 'friction')}>
+          <option value="dw">Darcy–Weisbach</option>
+          <option value="hw">Hazen–Williams</option>
+        </select>
+      </label>
       <NumField label="NPSH margin" q="head" value={project.npshMarginM} onChange={(v) => onSetting({ npshMarginM: v }, 'npsh')} />
       <NumField label="Max velocity" q="velocity" value={project.maxVelocityMps} onChange={(v) => onSetting({ maxVelocityMps: v }, 'vmax')} title="0 = off" />
       {computed.model && (

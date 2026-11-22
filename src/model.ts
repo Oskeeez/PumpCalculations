@@ -68,6 +68,8 @@ export interface PipeUI {
   fittings: FittingUI[];
   /** Optional pressure rating [kPa gauge]. An alert is raised when the solved pressure at either end exceeds it. */
   ratingKPaG?: number;
+  /** Hazen-Williams C, used when the project friction method is Hazen-Williams. */
+  hazenC?: number;
 }
 
 export interface PumpUI {
@@ -153,6 +155,8 @@ export interface ProjectUI {
   npshMarginM: number;
   /** Design alert: warn above this velocity [m/s]; 0 disables. */
   maxVelocityMps: number;
+  /** Pipe friction: Darcy-Weisbach with roughness (default) or Hazen-Williams with C. */
+  frictionMethod?: 'dw' | 'hw';
   nodes: NodeUI[];
   edges: EdgeUI[];
   /** Canvas scale [m per pixel]. */
@@ -223,6 +227,9 @@ export function uniqueName(base: string, taken: string[]): string {
 }
 
 export const defaultFluid = (): FluidUI => ({ id: 'water', customName: 'Custom fluid', customDensity: 850, customViscosityMPas: 5, customVaporKPa: 1 });
+
+/** Hazen-Williams C for a new pipe when none is given (new steel or ductile iron). */
+export const DEFAULT_HAZEN_C = 130;
 
 /** Make a junction an elbow, tee, wye, cross or reducer (or plain again), naming it to match. */
 export function setJunctionFitting(p: ProjectUI, uid: string, type: JunctionFittingType | 'none'): ProjectUI {
@@ -490,10 +497,11 @@ export function toSystemModel(p: HydraulicProject): SystemModel {
       const length = pipeLengthM(p, e);
       if (!(length >= 0)) throw new Error(`${e.name}: length must be ≥ 0.`);
       if (!(e.roughnessMm >= 0)) throw new Error(`${e.name}: roughness must be ≥ 0.`);
+      if (p.frictionMethod === 'hw' && e.hazenC !== undefined && !(e.hazenC > 0)) throw new Error(`${e.name}: Hazen-Williams C must be > 0.`);
       if (e.fittings.some((f) => !(f.k >= 0))) throw new Error(`${e.name}: fitting K values must be ≥ 0.`);
       return {
         kind: 'pipe', id: e.name, from, to,
-        spec: { lengthM: length, innerDiameterM: e.diameterMm / 1000, roughnessM: e.roughnessMm / 1000, elevationChangeM: 0, fittingsK: [...e.fittings.map((f) => f.k), ...(legLoss.has(e.uid) ? [legLoss.get(e.uid) as number] : [])] },
+        spec: { lengthM: length, innerDiameterM: e.diameterMm / 1000, roughnessM: e.roughnessMm / 1000, elevationChangeM: 0, fittingsK: [...e.fittings.map((f) => f.k), ...(legLoss.has(e.uid) ? [legLoss.get(e.uid) as number] : [])], ...(p.frictionMethod === 'hw' ? { hazenC: e.hazenC ?? DEFAULT_HAZEN_C } : {}) },
       };
     }
     if (e.kind === 'valve') {
@@ -628,6 +636,7 @@ export function hydraulicKey(p: HydraulicProject): string {
     p.temperatureC,
     p.npshMarginM,
     p.maxVelocityMps,
+    p.frictionMethod ?? 'dw',
     usesCanvas ? p.scaleMPerPx : 0,
     p.nodes.map(({ x, y, ...rest }) => (usesCanvas ? { x, y, ...rest } : rest)),
     p.edges,
@@ -664,6 +673,7 @@ function normalizeProject(p: Partial<ProjectUI> | undefined, depth = 0): Project
     temperatureC: p.temperatureC,
     npshMarginM: p.npshMarginM,
     maxVelocityMps: isNum(p.maxVelocityMps) ? p.maxVelocityMps : 3,
+    ...(p.frictionMethod === 'hw' ? { frictionMethod: 'hw' as const } : {}),
     nodes: p.nodes as NodeUI[],
     edges: (p.edges as EdgeUI[]).map((e) =>
       e.kind === 'valve'

@@ -58,7 +58,7 @@ export function SizeForPanel({ project, edge, locked, onApply, flowLps, fluid }:
   const runLimits = () => {
     if (flowLps === undefined || !fluid || edge.kind !== 'pipe') return;
     const hl = (idMm: number, rough: number | undefined) =>
-      pipeFlowState({ lengthM: 100, innerDiameterM: idMm / 1000, roughnessM: (rough ?? edge.roughnessMm) / 1000, elevationChangeM: 0, fittingsK: [] }, fluid, flowLps / 1000).frictionHeadLoss;
+      pipeFlowState({ lengthM: 100, innerDiameterM: idMm / 1000, roughnessM: (rough ?? edge.roughnessMm) / 1000, elevationChangeM: 0, fittingsK: [], ...(project.frictionMethod === 'hw' ? { hazenC: edge.hazenC ?? 130 } : {}) }, fluid, flowLps / 1000).frictionHeadLoss;
     setPick(smallestStandardSize(findSeries(seriesId), flowLps, { maxVelocityMps: maxV, maxHeadLossPer100m: maxHl > 0 ? maxHl : undefined }, hl) ?? null);
   };
   const ok = outcome && (outcome.status === 'solved' || outcome.status === 'already-passing');

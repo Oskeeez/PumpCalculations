@@ -34,6 +34,8 @@ Darcy–Weisbach: `h_f = f (L / D) v^2 / 2g`, plus minor losses `h_m = (sum K) v
 | 2300 to 4000 | a smooth (cubic smoothstep) blend of the laminar and Colebrook values, so head loss stays continuous and increasing. The result is flagged "transitional": the friction factor is uncertain there |
 | Re ≥ 4000 | Colebrook–White, solved by Newton iteration on `1/sqrt(f)` from a Swamee–Jain starting point |
 
+**Hazen–Williams** can be chosen instead of Darcy–Weisbach for the whole project (common for water and fire-protection work). Friction loss is then `h_f = k L Q^1.852 / (C^1.852 D^4.871)`, with k = 10.67 (EPANET's 4.727 in feet and cfs, converted exactly), so results agree with EPANET; roughness is ignored and each pipe has a C value. Hazen–Williams is empirical: it is valid for water at ordinary temperatures and turbulent flow only, and ignores viscosity. Fitting losses are unchanged.
+
 Pipe length is either typed or taken from the canvas: the straight-line 3D distance between the end nodes using the canvas scale and the node elevations. A real pipe is longer than the straight line where it bends, so use a typed length when the route is known.
 
 Fitting K values in the library are typical numbers for fully turbulent flow. They vary with size and manufacturer; they are not vendor data.

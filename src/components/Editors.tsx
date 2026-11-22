@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
-import { MATERIALS, matchMaterial, matchPipeSize } from '../library';
+import { HAZEN_C, MATERIALS, matchMaterial, matchPipeSize } from '../library';
 import { usePipeLibrary } from '../pipeLibrary';
-import { defaultControl, type EdgeUI, type FittingUI, type NodeUI, type PipeUI, type PumpControl, type PumpCurveEntry, type PumpUI, type ValveControlType, type ValveLossType, type ValveUI } from '../model';
+import { DEFAULT_HAZEN_C, defaultControl, type EdgeUI, type FittingUI, type NodeUI, type PipeUI, type PumpControl, type PumpCurveEntry, type PumpUI, type ValveControlType, type ValveLossType, type ValveUI } from '../model';
 import { orificeBoreForDrop, requiredCv, requiredKv } from '../sizing';
 import { useFittingLibrary } from '../fittingLibrary';
 import { ELBOW_STYLES, crossLegK, elbowK, reducerK, teeBranchK, teeRunK, FLANGED_BEND_NFT, JUNCTION_FITTING_LABELS, VALVE_TYPES, fittingK, fittingStatus, valveTypeK, type ElbowStyle, type JunctionFitting, type JunctionFittingType } from '../fittings';
@@ -148,7 +148,7 @@ function Direction({ inLabel, outLabel, from, to, onSwap }: { inLabel: string; o
   );
 }
 
-export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: PipeUI; from: string; to: string; canvasLengthM: number; onChange: (p: PipeUI) => void }) {
+export function PipeEditor({ pipe, from, to, canvasLengthM, onChange, frictionMethod = 'dw' }: { pipe: PipeUI; from: string; to: string; canvasLengthM: number; onChange: (p: PipeUI) => void; frictionMethod?: 'dw' | 'hw' }) {
   const U = useUnits();
   const setFit = (i: number, f: FittingUI) => onChange({ ...pipe, fittings: pipe.fittings.map((x, j) => (j === i ? f : x)) });
   const total = pipe.fittings.reduce((s, f) => s + f.k, 0);
@@ -172,7 +172,11 @@ export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: 
           <NumField label="Length" q="length" value={pipe.lengthM} onChange={(v) => onChange({ ...pipe, lengthM: v })} />
         )}
         <NumField label="Inner diameter" q="diameter" value={pipe.diameterMm} onChange={(v) => onChange({ ...pipe, diameterMm: v })} />
-        <NumField label="Roughness ε" q="roughness" value={pipe.roughnessMm} onChange={(v) => onChange({ ...pipe, roughnessMm: v })} />
+        {frictionMethod === 'hw' ? (
+          <NumField label="Hazen–Williams C" unit="–" value={pipe.hazenC ?? DEFAULT_HAZEN_C} onChange={(v) => v > 0 && onChange({ ...pipe, hazenC: v })} />
+        ) : (
+          <NumField label="Roughness ε" q="roughness" value={pipe.roughnessMm} onChange={(v) => onChange({ ...pipe, roughnessMm: v })} />
+        )}
       </div>
       <div className="checks">
         <label>
@@ -187,10 +191,17 @@ export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: 
       <div className="grid">
         <label className="field">
           <span>Material</span>
+          {frictionMethod === 'hw' ? (
+            <select aria-label="Material" value={HAZEN_C.find((m) => m.c === (pipe.hazenC ?? DEFAULT_HAZEN_C))?.name ?? ''} onChange={(e) => { const m = HAZEN_C.find((x) => x.name === e.target.value); if (m) onChange({ ...pipe, hazenC: m.c }); }}>
+              <option value="">Custom</option>
+              {HAZEN_C.map((m) => <option key={m.name} value={m.name}>{m.name} (C {m.c})</option>)}
+            </select>
+          ) : (
           <select value={matchMaterial(pipe.roughnessMm) ?? ''} onChange={(e) => { const m = MATERIALS.find((x) => x.name === e.target.value); if (m) onChange({ ...pipe, roughnessMm: m.roughnessMm }); }}>
             <option value="">Custom</option>
             {MATERIALS.map((m) => <option key={m.name} value={m.name}>{m.name} ({U.f('roughness', m.roughnessMm, 4)} {U.u('roughness')})</option>)}
           </select>
+          )}
         </label>
         <label className="field">
           <span>Size series</span>

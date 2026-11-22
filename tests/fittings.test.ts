@@ -120,3 +120,14 @@ describe('own loss values', () => {
     expect(sum(m, 'run1', 'br')).toBeCloseTo(1.1, 10);
   });
 });
+
+import { hazenWilliamsLoss, pipeFlowState } from '../src/solver/pipe';
+describe('Hazen-Williams', () => {
+  it('matches the SI textbook form h = 10.67 L Q^1.852 / (C^1.852 D^4.87)', () => {
+    const h = hazenWilliamsLoss(1000, 0.3, 100, 0.1);
+    expect(h / ((10.67 * 1000 * 0.1 ** 1.852) / (100 ** 1.852 * 0.3 ** 4.87))).toBeCloseTo(1, 2);
+    const st = pipeFlowState({ lengthM: 1000, innerDiameterM: 0.3, roughnessM: 0, elevationChangeM: 0, fittingsK: [], hazenC: 100 }, { name: 'w', temperatureC: 20, density: 998, dynamicViscosity: 0.001, vaporPressure: 2339 }, 0.1);
+    expect(st.frictionHeadLoss).toBeCloseTo(h, 12);
+    expect(hazenWilliamsLoss(1000, 0.3, 140, 0.1)).toBeLessThan(h);
+  });
+});

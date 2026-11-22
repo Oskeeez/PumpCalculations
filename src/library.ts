@@ -19,6 +19,18 @@ export const MATERIALS: readonly Material[] = [
   { name: 'Riveted steel (typical)', roughnessMm: 3.0 },
 ];
 
+/** Typical Hazen-Williams C for new pipe (NFPA 13 table values for steel, copper and plastic). */
+export const HAZEN_C: readonly { name: string; c: number }[] = [
+  { name: 'Black steel, dry system', c: 100 },
+  { name: 'Black steel, wet system', c: 120 },
+  { name: 'Galvanised steel', c: 120 },
+  { name: 'Cast iron, unlined', c: 100 },
+  { name: 'Ductile iron, cement-lined', c: 140 },
+  { name: 'Copper tube', c: 150 },
+  { name: 'Stainless steel', c: 150 },
+  { name: 'Plastic (PVC, CPVC, PE)', c: 150 },
+];
+
 export interface NominalSize {
   nps: string;
   /** Inside diameter [mm]. */

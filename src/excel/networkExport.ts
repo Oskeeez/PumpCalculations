@@ -218,7 +218,8 @@ export async function buildNetworkWorkbook(x: NetworkExportInput): Promise<Excel
     pr.getCell(row, 8).value = { formula: `${I(rRho)}*G${row}*${D}/${I(rMu)}`, result: st.reynolds };
     pr.getCell(row, 9).value = { formula: `IF(H${row}=0,"zero",IF(H${row}<2300,"laminar",IF(H${row}<4000,"transitional","turbulent")))`, result: st.regime };
     pr.getCell(row, 10).value = st.regime === 'laminar' ? { formula: `IF(H${row}>0,64/H${row},0)`, result: st.frictionFactor } : Number.isFinite(st.frictionFactor) ? st.frictionFactor : 0;
-    pr.getCell(row, 11).value = {
+    if (spec(model, p.id).hazenC !== undefined) pr.getCell(row, 11).value = 'n/a (Hazen-Williams)';
+    else pr.getCell(row, 11).value = {
       formula: `IF(H${row}>=4000,1/SQRT(J${row})+2*LOG10(Inputs!$F$${ir}/${D}/3.7+2.51/(H${row}*SQRT(J${row}))),"n/a")`,
       result: st.reynolds >= 4000 ? 1 / Math.sqrt(st.frictionFactor) + 2 * Math.log10(spec(model, p.id).roughnessM / spec(model, p.id).innerDiameterM / 3.7 + 2.51 / (st.reynolds * Math.sqrt(st.frictionFactor))) : 'n/a',
     };
