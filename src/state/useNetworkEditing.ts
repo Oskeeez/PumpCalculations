@@ -6,6 +6,7 @@ import {
   makeEdge,
   newNode,
   placeStandalone,
+  setJunctionFitting,
   type EdgeUI,
   type FluidUI,
   type InsertKind,
@@ -14,12 +15,13 @@ import {
   type PipeUI,
   type ProjectUI,
 } from '../model';
+import type { JunctionFittingType } from '../fittings';
 import type { Message, SetProject } from './types';
 
 type Point = { x: number; y: number };
 
 /** The ways the user changes the network on the canvas or in the editors. Each one updates the project and the selection. */
-export function useNetworkEditing(project: ProjectUI, setProject: SetProject, selection: Selection, setSelection: (s: Selection) => void, setMessage: (m: Message | undefined) => void) {
+export function useNetworkEditing(project: ProjectUI, setProject: SetProject, selection: Selection, setSelection: (s: Selection) => void, setMessage: (m: Message | undefined) => void, preset: JunctionFittingType | 'none' = 'none') {
   const fail = (err: unknown) => setMessage({ kind: 'error', text: err instanceof Error ? err.message : String(err) });
   const selectEdge = (uid: string) => setSelection({ type: 'edge', uid });
   /** Diameter of the pipe at a node, for new valves and orifices that start there. */
@@ -27,7 +29,10 @@ export function useNetworkEditing(project: ProjectUI, setProject: SetProject, se
 
   const addNode = (kind: NodeKind, x: number, y: number) => {
     const n = newNode(kind, x, y, project.nodes.map((q) => q.name));
-    setProject((p) => ({ ...p, nodes: [...p.nodes, n] }));
+    setProject((p) => {
+      const next = { ...p, nodes: [...p.nodes, n] };
+      return kind === 'junction' && preset !== 'none' ? setJunctionFitting(next, n.uid, preset) : next;
+    });
     setSelection({ type: 'node', uid: n.uid });
   };
   const connect = (kind: ConnectKind, from: string, to: string) => {
@@ -38,7 +43,7 @@ export function useNetworkEditing(project: ProjectUI, setProject: SetProject, se
   const insertInto = (kind: InsertKind, pipeUid: string, x: number, y: number) => {
     try {
       const r = insertOnPipe(project, pipeUid, kind, x, y);
-      setProject(r.project);
+      setProject(kind === 'junction' && preset !== 'none' ? setJunctionFitting(r.project, r.selectUid, preset) : r.project);
       setSelection({ type: kind === 'junction' || kind === 'tank' ? 'node' : 'edge', uid: r.selectUid });
       setMessage(undefined);
     } catch (err) {

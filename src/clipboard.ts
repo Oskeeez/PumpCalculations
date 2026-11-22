@@ -38,7 +38,9 @@ export function pasteClip(p: ProjectUI, clip: Clip, offset = { x: 40, y: 40 }): 
     map.set(n.uid, uid);
     const name = nextName(n.name, nodeNames);
     nodeNames.push(name);
-    return { ...clone(n), uid, name, x: n.x + offset.x, y: n.y + offset.y };
+    const copy = clone(n);
+    if (copy.fitting) copy.fitting = { ...copy.fitting, branchUid: undefined };
+    return { ...copy, uid, name, x: n.x + offset.x, y: n.y + offset.y };
   });
   const edges = clip.edges.map((e): EdgeUI => {
     const name = nextName(e.name, edgeNames);

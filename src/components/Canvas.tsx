@@ -1,6 +1,7 @@
 import { useEffect, useState, type PointerEvent as RPointerEvent } from 'react';
 import { planDistancePx } from '../geometry';
-import type { EdgeUI, InsertKind, NodeKind, NodeUI, ProjectUI } from '../model';
+import { JUNCTION_FITTING_LABELS, fittingStatus } from '../fittings';
+import type { EdgeUI, InsertKind, NodeKind, NodeUI, PipeUI, ProjectUI } from '../model';
 import type { SystemResult } from '../solver';
 import { useUnits } from '../units';
 import { nodesInRect } from '../clipboard';
@@ -23,6 +24,14 @@ export interface PickSpec {
 
 const GRID = 10;
 const SYM_KEY = 'pipe-network-symbol-scale';
+
+function fittingTag(n: NodeUI, project: ProjectUI): string {
+  const f = n.fitting;
+  if (!f) return '';
+  const st = fittingStatus(n, project.nodes, project.edges.filter((e): e is PipeUI => e.kind === 'pipe'));
+  if (st.problem) return `${JUNCTION_FITTING_LABELS[f.type]} ?`;
+  return `${JUNCTION_FITTING_LABELS[f.type]}${st.angleDeg !== undefined && f.type !== 'tee' ? ` ${Math.round(st.angleDeg)}°` : ''}`;
+}
 
 interface Props {
   project: ProjectUI;
@@ -454,6 +463,7 @@ export function Canvas({ project, result, selection, tool, pending, calib, onSel
         ) : (
           <circle r={11} className="junction" />
         )}
+        {n.fitting && <text y={-17} textAnchor="middle" className="t-sub">{fittingTag(n, project)}</text>}
         {locked?.has(n.uid) && <text x={n.kind === 'tank' ? 26 : 10} y={-14} className="lock">🔒</text>}
         {opts.labels !== 'none' && <text y={top} textAnchor="middle" className="t-name">{n.name}</text>}
         {opts.labels === 'full' && (

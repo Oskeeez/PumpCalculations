@@ -4,6 +4,7 @@
  * viscosity mPa.s.
  */
 import type { Assumption, Draft, Target } from './ai/types';
+import { JUNCTION_FITTING_LABELS, defaultFitting, junctionLegLosses, type JunctionFitting, type JunctionFittingType } from './fittings';
 import { DEFAULT_CANVAS, DEFAULT_SCALE_M_PER_PX, lengthFromCanvas } from './geometry';
 import {
   NetworkError,
@@ -43,6 +44,8 @@ export interface NodeUI {
   pressureKPa: number;
   /** External withdrawal [L/s]; negative = inflow (junctions only). */
   demandLps: number;
+  /** What the junction is: an elbow, tee, wye, cross or reducer. Plain junction when absent. */
+  fitting?: JunctionFitting;
 }
 
 export interface FittingUI {
@@ -124,6 +127,8 @@ export interface ValveUI {
   /** Discharge coefficient for lossType 'orifice' (default 0.61). */
   orificeCd?: number;
   checkValve: boolean;
+  /** Valve type chosen from the list (gate, globe, ...). The loss K follows it and the size. */
+  valveType?: string;
   open: boolean;
   /** Regulation: none, pressure-reducing, pressure-sustaining or flow-control. */
   controlType: ValveControlType;
@@ -218,6 +223,22 @@ export function uniqueName(base: string, taken: string[]): string {
 }
 
 export const defaultFluid = (): FluidUI => ({ id: 'water', customName: 'Custom fluid', customDensity: 850, customViscosityMPas: 5, customVaporKPa: 1 });
+
+/** Make a junction an elbow, tee, wye, cross or reducer (or plain again), naming it to match. */
+export function setJunctionFitting(p: ProjectUI, uid: string, type: JunctionFittingType | 'none'): ProjectUI {
+  const taken = p.nodes.filter((n) => n.uid !== uid).map((n) => n.name);
+  return {
+    ...p,
+    nodes: p.nodes.map((n) => {
+      if (n.uid !== uid || n.kind !== 'junction') return n;
+      const plain = !n.fitting;
+      const wasDefault = /^(Junction|Elbow|Tee|Wye|Cross|Reducer) \d+$/.test(n.name);
+      const { fitting: _old, ...rest } = n;
+      if (type === 'none') return wasDefault ? { ...rest, name: uniqueName('Junction', taken) } : rest;
+      return { ...rest, fitting: defaultFitting(type), ...(plain || wasDefault ? { name: uniqueName(type === 'reducer' ? 'Reducer' : JUNCTION_FITTING_LABELS[type], taken) } : {}) };
+    }),
+  };
+}
 
 export function newNode(kind: NodeKind, x: number, y: number, taken: string[]): NodeUI {
   return {
@@ -459,6 +480,7 @@ export function toSystemModel(p: HydraulicProject): SystemModel {
       : { kind: 'junction', id: n.name, elevationM: n.elevationM, demandM3s: n.demandLps / 1000 },
   );
   for (const n of p.nodes) if (n.kind === 'tank' && !(n.levelM >= 0)) throw new Error(`${n.name}: liquid level must be ≥ 0.`);
+  const legLoss = junctionLegLosses(p.nodes, p.edges.filter((e): e is PipeUI => e.kind === 'pipe'));
   const edges: SysEdge[] = p.edges.map((e): SysEdge => {
     const from = nameOf.get(e.from);
     const to = nameOf.get(e.to);
@@ -471,7 +493,7 @@ export function toSystemModel(p: HydraulicProject): SystemModel {
       if (e.fittings.some((f) => !(f.k >= 0))) throw new Error(`${e.name}: fitting K values must be ≥ 0.`);
       return {
         kind: 'pipe', id: e.name, from, to,
-        spec: { lengthM: length, innerDiameterM: e.diameterMm / 1000, roughnessM: e.roughnessMm / 1000, elevationChangeM: 0, fittingsK: e.fittings.map((f) => f.k) },
+        spec: { lengthM: length, innerDiameterM: e.diameterMm / 1000, roughnessM: e.roughnessMm / 1000, elevationChangeM: 0, fittingsK: [...e.fittings.map((f) => f.k), ...(legLoss.has(e.uid) ? [legLoss.get(e.uid) as number] : [])] },
       };
     }
     if (e.kind === 'valve') {

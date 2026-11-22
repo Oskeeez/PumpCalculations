@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
+import { JUNCTION_FITTING_LABELS, type JunctionFittingType } from '../fittings';
 import type { ImageLayer } from '../model';
 import type { Tool } from './Canvas';
 
@@ -13,6 +14,8 @@ const TOOLS: { id: Exclude<Tool, 'select' | 'scale'>; label: string; title: stri
 
 interface Props {
   tool: Tool;
+  junctionPreset: JunctionFittingType | 'none';
+  onJunctionPreset: (t: JunctionFittingType | 'none') => void;
   onSelectTool: () => void;
   onPickTool: (t: Tool) => void;
   canDelete: boolean;
@@ -44,7 +47,14 @@ export function NetworkToolbar(p: Props) {
     <div className="toolbar" role="toolbar" aria-label="Network tools">
       <button className={p.tool === 'select' ? 'active' : ''} aria-pressed={p.tool === 'select'} title="Select and move (Esc)" onClick={p.onSelectTool}>↖ Select</button>
       {TOOLS.map((t) => (
-        <button key={t.id} className={p.tool === t.id ? 'active' : ''} title={t.title} aria-pressed={p.tool === t.id} onClick={() => p.onPickTool(t.id)}>{t.label}</button>
+        <Fragment key={t.id}>
+        <button className={p.tool === t.id ? 'active' : ''} title={t.title} aria-pressed={p.tool === t.id} onClick={() => p.onPickTool(t.id)}>{t.label}</button>
+        {t.id === 'junction' && (
+          <select aria-label="Junction type" value={p.junctionPreset} onChange={(e) => p.onJunctionPreset(e.target.value as JunctionFittingType | 'none')}>
+            {(['none', 'elbow', 'tee', 'wye', 'cross', 'reducer'] as const).map((k) => <option key={k} value={k}>{JUNCTION_FITTING_LABELS[k]}</option>)}
+          </select>
+        )}
+        </Fragment>
       ))}
       <button onClick={p.onDelete} disabled={!p.canDelete}>Delete</button>
       <span className="sep" />

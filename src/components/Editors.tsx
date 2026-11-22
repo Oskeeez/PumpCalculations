@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react';
-import { FITTINGS, MATERIALS, PIPE_SERIES, matchMaterial, matchPipeSize } from '../library';
-import { defaultControl, type FittingUI, type NodeUI, type PipeUI, type PumpControl, type PumpCurveEntry, type PumpUI, type ValveControlType, type ValveLossType, type ValveUI } from '../model';
+import { MATERIALS, PIPE_SERIES, matchMaterial, matchPipeSize } from '../library';
+import { defaultControl, type EdgeUI, type FittingUI, type NodeUI, type PipeUI, type PumpControl, type PumpCurveEntry, type PumpUI, type ValveControlType, type ValveLossType, type ValveUI } from '../model';
 import { orificeBoreForDrop, requiredCv, requiredKv } from '../sizing';
+import { ELBOW_STYLES, FITTING_LIBRARY, JUNCTION_FITTING_LABELS, VALVE_TYPES, fittingK, fittingStatus, valveTypeK, type ElbowStyle, type JunctionFitting, type JunctionFittingType } from '../fittings';
 import { useUnits, type Quantity } from '../units';
 import { NumField } from './NumField';
 import { PressureField } from './PressureField';
@@ -15,8 +16,11 @@ function NameField({ value, onChange }: { value: string; onChange: (v: string) =
   );
 }
 
-export function NodeEditor({ node, onChange }: { node: NodeUI; onChange: (n: NodeUI) => void }) {
+export function NodeEditor({ node, nodes, edges, onChange, onSetFitting }: { node: NodeUI; nodes: NodeUI[]; edges: EdgeUI[]; onChange: (n: NodeUI) => void; onSetFitting: (t: JunctionFittingType | 'none') => void }) {
   const isTank = node.kind === 'tank';
+  const f = node.fitting;
+  const status = f ? fittingStatus(node, nodes, edges.filter((e): e is PipeUI => e.kind === 'pipe')) : undefined;
+  const setF = (patch: Partial<JunctionFitting>) => f && onChange({ ...node, fitting: { ...f, ...patch } });
   return (
     <section className="editor">
       <h3>{isTank ? 'Tank' : 'Junction'}</h3>
@@ -32,6 +36,45 @@ export function NodeEditor({ node, onChange }: { node: NodeUI; onChange: (n: Nod
           <NumField label="Demand (withdrawal)" q="flow" value={node.demandLps} onChange={(v) => onChange({ ...node, demandLps: v })} />
         )}
       </div>
+      {!isTank && (
+        <>
+          <div className="grid">
+            <label className="field"><span>Type</span>
+              <select aria-label="Junction fitting" value={f?.type ?? 'none'} onChange={(e) => onSetFitting(e.target.value as JunctionFittingType | 'none')}>
+                {(['none', 'elbow', 'tee', 'wye', 'cross', 'reducer'] as const).map((k) => <option key={k} value={k}>{JUNCTION_FITTING_LABELS[k]}</option>)}
+              </select>
+            </label>
+            {f?.type === 'elbow' && (
+              <label className="field"><span>Style</span>
+                <select value={f.style} onChange={(e) => setF({ style: e.target.value as ElbowStyle })}>
+                  {ELBOW_STYLES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                </select>
+              </label>
+            )}
+            {(f?.type === 'tee' || f?.type === 'wye') && status && status.legs.length === 3 && (
+              <label className="field"><span>Branch</span>
+                <select value={status.branchUid ?? ''} onChange={(e) => setF({ branchUid: e.target.value })}>
+                  {status.legs.map((l) => <option key={l.uid} value={l.uid}>{(l as EdgeUI).name}</option>)}
+                </select>
+              </label>
+            )}
+            {f?.type === 'reducer' && <NumField label="Cone angle (180 = sudden)" unit="°" value={f.coneDeg} onChange={(v) => v > 0 && v <= 180 && setF({ coneDeg: v })} />}
+          </div>
+          {(f?.type === 'elbow' || f?.type === 'wye') && (
+            <div className="grid">
+              <div className="field opt">
+                <label><input type="checkbox" checked={f.fromDrawing} onChange={(e) => setF({ fromDrawing: e.target.checked, angleDeg: Math.round(status?.angleDeg ?? f.angleDeg) })} /> Angle from drawing</label>
+              </div>
+              {f.fromDrawing ? (
+                <label className="field"><span>{f.type === 'elbow' ? 'Turn' : 'Branch angle'} <em>[°]</em></span><input value={Math.round(status?.angleDeg ?? 0)} readOnly aria-label="Angle from drawing" /></label>
+              ) : (
+                <NumField label={f.type === 'elbow' ? 'Turn' : 'Branch angle'} unit="°" value={f.angleDeg} onChange={(v) => v >= 0 && v <= 180 && setF({ angleDeg: v })} />
+              )}
+            </div>
+          )}
+          {status?.problem && <div className="banner warn">{status.problem}</div>}
+        </>
+      )}
     </section>
   );
 }
@@ -141,12 +184,16 @@ export function PipeEditor({ pipe, from, to, canvasLengthM, onChange }: { pipe: 
         <select
           value=""
           onChange={(e) => {
-            const p = FITTINGS.find((x) => x.name === e.target.value);
-            if (p) onChange({ ...pipe, fittings: [...pipe.fittings, { name: p.name, k: p.k }] });
+            const p = FITTING_LIBRARY.find((x) => x.name === e.target.value);
+            if (p) onChange({ ...pipe, fittings: [...pipe.fittings, { name: p.name, k: Math.round(fittingK(p, pipe.diameterMm) * 1000) / 1000 }] });
           }}
         >
           <option value="">Choose…</option>
-          {FITTINGS.map((p) => <option key={p.name} value={p.name}>{p.name} (K {p.k})</option>)}
+          {[...new Set(FITTING_LIBRARY.map((p) => p.category))].map((c) => (
+            <optgroup key={c} label={c}>
+              {FITTING_LIBRARY.filter((p) => p.category === c).map((p) => <option key={p.name} value={p.name}>{p.name} (K {fittingK(p, pipe.diameterMm).toFixed(2)})</option>)}
+            </optgroup>
+          ))}
         </select>
       </label>
       <button onClick={() => onChange({ ...pipe, fittings: [...pipe.fittings, { name: 'Fitting', k: 0.5 }] })}>+ Add custom fitting</button>
@@ -228,7 +275,17 @@ export function ValveEditor({ valve, from, to, onChange, designFlowLps = 0, dens
       </div>
       <h4>{valve.controlType === 'none' ? 'Loss' : 'Loss (fully open)'}</h4>
       <div className="grid">
-        <NumField label="Diameter" q="diameter" value={valve.diameterMm} onChange={(v) => onChange({ ...valve, diameterMm: v })} />
+        <NumField label="Diameter" q="diameter" value={valve.diameterMm} onChange={(v) => onChange({ ...valve, diameterMm: v, ...(valve.valveType && valve.lossType === 'K' ? { lossValue: valveTypeK(valve.valveType, v) ?? valve.lossValue } : {}) })} />
+        <label className="field">
+          <span>Valve type</span>
+          <select aria-label="Valve type" value={valve.valveType ?? ''} onChange={(e) => {
+            const t = VALVE_TYPES.find((x) => x.id === e.target.value);
+            onChange(t ? { ...valve, valveType: t.id, lossType: 'K', lossValue: valveTypeK(t.id, valve.diameterMm) ?? valve.lossValue, checkValve: t.check ?? false } : { ...valve, valveType: undefined });
+          }}>
+            <option value="">Custom</option>
+            {VALVE_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+          </select>
+        </label>
         <label className="field">
           <span>Loss by</span>
           <select value={valve.lossType} onChange={(e) => onChange({ ...valve, lossType: e.target.value as ValveLossType })}>
@@ -244,7 +301,7 @@ export function ValveEditor({ valve, from, to, onChange, designFlowLps = 0, dens
             <NumField label="Discharge coeff. Cd" unit="–" value={valve.orificeCd ?? 0.61} onChange={(v) => onChange({ ...valve, orificeCd: v })} />
           </>
         ) : (
-          <NumField label={valve.lossType} unit={unit} value={valve.lossValue} onChange={(v) => onChange({ ...valve, lossValue: v })} />
+          <NumField label={valve.lossType} unit={unit} value={valve.lossValue} onChange={(v) => onChange({ ...valve, lossValue: v, valveType: undefined })} />
         )}
       </div>
       <SizingHelper key={valve.uid + valve.lossType} valve={valve} onChange={onChange} designFlowLps={designFlowLps} density={density} />

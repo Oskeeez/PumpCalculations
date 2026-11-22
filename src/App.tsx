@@ -20,6 +20,7 @@ import { SpeedPanel, type SpeedConfig } from './components/SpeedPanel';
 import { TargetsPanel } from './components/TargetsPanel';
 import { SolvePanel } from './components/SolvePanel';
 import { SizeForPanel } from './components/SizeForPanel';
+import type { JunctionFittingType } from './fittings';
 import { DEFAULT_SOLVE_SETTINGS, solveForTargets, type SolveOutcome, type SolveSettings } from './autosolve';
 import { usePersistentState } from './state/usePersistentState';
 import { TopBar } from './components/TopBar';
@@ -29,7 +30,7 @@ import { calibrate } from './geometry';
 import { useHistory } from './history';
 import { Workspace } from './layout/Workspace';
 import { activatePanel, groupOfPanel, loadLayout, openPanel, saveLayout, type LayoutNode, type PanelId } from './layout/layout';
-import { blankProject, compute, defaultProject, hydraulicKey, parseProject, pipeLengthM, syncUidCounter, type EdgeUI, type ProjectUI } from './model';
+import { blankProject, compute, setJunctionFitting, defaultProject, hydraulicKey, parseProject, pipeLengthM, syncUidCounter, type EdgeUI, type ProjectUI } from './model';
 import { exportWorkbook } from './state/exportWorkbook';
 import { downloadProject, loadInitial, loadUnits, useAutosave } from './state/persistence';
 import type { Message } from './state/types';
@@ -81,7 +82,8 @@ export function App() {
   const { drafts, setDrafts, draftTab, setDraftTab, acceptDraft, discardDraft } = useDrafts(boot.drafts ?? [], project, setProject, setMessage);
   const lib = useCurveLibrary(project, setProject, setMessage);
   const imgs = useImages(project, setProject, setMessage);
-  const edit = useNetworkEditing(project, setProject, selection, setSelection, setMessage);
+  const [junctionPreset, setJunctionPreset] = useState<JunctionFittingType | 'none'>('none');
+  const edit = useNetworkEditing(project, setProject, selection, setSelection, setMessage, junctionPreset);
   useAutosave(project, drafts, unitSystem);
 
   // ---- calculation (re-solved only when something hydraulic changes)
@@ -343,6 +345,8 @@ export function App() {
     <div className="net-panel">
       <NetworkToolbar
         tool={tool}
+        junctionPreset={junctionPreset}
+        onJunctionPreset={setJunctionPreset}
         onSelectTool={() => toSelect('select')}
         onPickTool={pickTool}
         canDelete={!!selection || multi.size > 0}
@@ -421,7 +425,7 @@ export function App() {
                 <span>🔒 Lock (solver leaves it alone)</span>
               </label>
             )}
-            {selNode && <NodeEditor node={selNode} onChange={edit.updateNode} />}
+            {selNode && <NodeEditor node={selNode} nodes={project.nodes} edges={project.edges} onChange={edit.updateNode} onSetFitting={(t) => setProject((p) => setJunctionFitting(p, selNode.uid, t))} />}
             {selEdge?.kind === 'pipe' && <PipeEditor pipe={selEdge} from={nodeName(selEdge.from)} to={nodeName(selEdge.to)} canvasLengthM={pipeLengthM(project, selEdge)} onChange={edit.updateEdge} />}
             {selEdge?.kind === 'valve' && (
               <ValveEditor
