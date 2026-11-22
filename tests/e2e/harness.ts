@@ -70,3 +70,30 @@ export function pageScrolls(page: Page): Promise<boolean> {
 }
 
 export const tabNames = async (page: Page): Promise<string[]> => (await page.locator('.ws-tab').allTextContents()).map((t) => t.replace('×', '').trim());
+
+/**
+ * Drag a tab onto another tile by firing the HTML5 drag events directly. Playwright's own dragTo depends on the browser build's
+ * drag-and-drop emulation, which hangs in the headless shell that CI installs.
+ */
+export async function dragTab(page: Page, source: Locator, targetGroup: Locator, at: { x: number; y: number }): Promise<void> {
+  const dt = await page.evaluateHandle(() => new DataTransfer());
+  const box = (await targetGroup.boundingBox())!;
+  const point = { clientX: box.x + at.x, clientY: box.y + at.y };
+  await source.dispatchEvent('dragstart', { dataTransfer: dt });
+  const drop = targetGroup.locator('.ws-drop');
+  await drop.waitFor();
+  await drop.dispatchEvent('dragenter', { dataTransfer: dt, ...point });
+  await drop.dispatchEvent('dragover', { dataTransfer: dt, ...point });
+  await drop.dispatchEvent('drop', { dataTransfer: dt, ...point });
+  await source.dispatchEvent('dragend', { dataTransfer: dt });
+}
+
+/** A point on the drawn line of an SVG path (half way along it), in page coordinates. */
+export async function pointOnPath(path: Locator): Promise<{ x: number; y: number }> {
+  return path.evaluate((el) => {
+    const p = el as SVGPathElement;
+    const pt = p.getPointAtLength(p.getTotalLength() / 2);
+    const m = p.getScreenCTM()!;
+    return { x: pt.x * m.a + pt.y * m.c + m.e, y: pt.x * m.b + pt.y * m.d + m.f };
+  });
+}

@@ -17,6 +17,19 @@ Based on AFT Fathom's junction list, its Fittings & Losses library (about 400 it
 | Pipe size library | Built-in series plus company series imported from Excel or CSV. Template download. |
 | Standard sizing | Smallest standard size from the chosen series that meets a velocity limit or head-loss limit at the solved flow. |
 
+## Added after the first plan
+
+| Feature | Notes |
+|---|---|
+| Hazen–Williams | Project option, C per pipe, agrees with EPANET |
+| EPANET `.inp` | Import and export, including emitters; the route from Fathom |
+| PCF import | CAD piping component files with 3D geometry |
+| System curve, HGL profile | On the pump chart, and a profile panel |
+| Calculation record | Title block, revisions, sign-off, fingerprint, full input listing |
+| Fixed-pressure node, sprinkler outlet, relief valve | Boundary components |
+| Validation pack | Ten cases, runs in the app, printable report |
+| FluidFlow files | Not possible directly (closed format). Needs a sample of FluidFlow's Excel export to build an importer for it |
+
 ## Not yet
 
 Area-change and general components with user-defined curves, heat exchangers, spray discharge, weirs, venturis, jet pumps, three-way valves, Darby 3-K, GIS and CAD import, friction data sets by pipe age, transient analysis. Each needs data or a model this app does not have yet.

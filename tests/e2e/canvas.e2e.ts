@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { center, count, drag, open, startApp, type App, type Session } from './harness';
+import { center, count, drag, open, pointOnPath, startApp, type App, type Session } from './harness';
 
 let app: App;
 beforeAll(async () => { app = await startApp(); });
@@ -36,7 +36,8 @@ describe('drawing tools', () => {
     const n0 = await count(s.page, 'g.node');
     const e0 = await count(s.page, 'g.edge');
     await tool(s, 'Tank').click();
-    await s.page.mouse.click((await center(s.page.locator('g.edge.pipe .edge-hit').nth(2))).x, (await center(s.page.locator('g.edge.pipe .edge-hit').nth(2))).y);
+    const onPipe = await pointOnPath(s.page.locator('g.edge.pipe .edge-hit').nth(2));
+    await s.page.mouse.click(onPipe.x, onPipe.y);
     expect(await count(s.page, 'g.node')).toBe(n0 + 1);
     expect(await count(s.page, 'g.edge')).toBe(e0 + 1);
     await s.page.keyboard.press('Escape');

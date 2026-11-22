@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { count, drag, open, pageScrolls, startApp, tabNames, type App } from './harness';
+import { count, drag, open, pageScrolls, startApp, tabNames, type App, dragTab } from './harness';
 
 let app: App;
 beforeAll(async () => { app = await startApp(); });
@@ -21,7 +21,7 @@ describe('workspace', () => {
     const net = s.page.locator('.ws-group').filter({ has: s.page.locator('.ws-tab:has-text("Network")') }).first();
     const nb = (await net.boundingBox())!;
     const before = await count(s.page, '.ws-group');
-    await s.page.locator('.ws-tab:has-text("Results")').first().dragTo(net, { targetPosition: { x: 20, y: nb.height / 2 } });
+    await dragTab(s.page, s.page.locator('.ws-tab:has-text("Results")').first(), net, { x: 20, y: nb.height / 2 });
     expect(await count(s.page, '.ws-group')).toBe(before + 1);
     const first = s.page.locator('.ws-group').first();
     expect(await first.locator('.ws-tab').allTextContents()).toEqual([expect.stringContaining('Results')]);
@@ -46,7 +46,7 @@ describe('workspace', () => {
 
     // move something so the saved layout differs from the default, then reload
     const net = s.page.locator('.ws-group').filter({ has: s.page.locator('.ws-tab:has-text("Network")') }).first();
-    await s.page.locator('.ws-tab:has-text("Results")').first().dragTo(net, { targetPosition: { x: 20, y: 200 } });
+    await dragTab(s.page, s.page.locator('.ws-tab:has-text("Results")').first(), net, { x: 20, y: 200 });
     await s.page.waitForTimeout(500);
     await s.page.reload();
     await s.page.waitForSelector('svg.canvas');
