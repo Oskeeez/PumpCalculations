@@ -24,6 +24,17 @@ interface Props {
   onShowTargets: () => void;
 }
 
+const SETTING_LABEL: Record<string, string> = {
+  diameter: 'Pipe diameter',
+  speed: 'Pump speed (× rated)',
+  'impeller trim': 'Impeller trim (D / D full)',
+  'orifice bore': 'Orifice bore diameter',
+  'flow setting': 'Flow set point',
+  'pressure setting': 'Pressure set point',
+  'throttle position': 'Valve resistance (× present)',
+  'liquid level': 'Tank liquid level',
+};
+
 const STATUS_TEXT: Record<SolveOutcome['status'], { kind: 'ok' | 'warn' | 'error'; text: string }> = {
   solved: { kind: 'ok', text: 'Every target can be met with the changes below.' },
   'already-passing': { kind: 'ok', text: 'Every target already passes. Nothing to change.' },
@@ -43,7 +54,6 @@ export function SolvePanel(p: Props) {
   return (
     <div className="solve">
       <section className="solve-head">
-        <p className="hint">Keeps every component. Changes only what you allow below, and nothing locked, until the targets pass. It does not guess: it tries each change with the real solver, keeps what helps, then pulls every change back to the smallest that works.</p>
         {p.statuses.length === 0 ? (
           <div className="banner warn">There are no targets yet. <button onClick={p.onShowTargets}>Add targets…</button></div>
         ) : failing.length === 0 ? (
@@ -67,14 +77,14 @@ export function SolvePanel(p: Props) {
       {o && (
         <section className="solve-result">
           <div className={`banner ${STATUS_TEXT[o.status].kind}`}>{STATUS_TEXT[o.status].text}</div>
-          {p.stale && <div className="banner warn">The network has changed since this was worked out. Run it again before applying.</div>}
+          {p.stale && <div className="banner warn">The network has changed. Solve again before applying.</div>}
           {o.notes.map((n, i) => <p key={i} className="hint">{n}</p>)}
           {o.changes.length > 0 && (
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Component</th><th>What</th><th>Now</th><th>Change to</th></tr></thead>
+                <thead><tr><th>Component</th><th>Setting</th><th>Current</th><th>Proposed</th></tr></thead>
                 <tbody>
-                  {o.changes.map((c) => <tr key={c.uid + c.parameter}><td>{c.component}</td><td>{c.parameter}</td><td>{c.from}</td><td><b>{c.to}</b></td></tr>)}
+                  {o.changes.map((c) => <tr key={c.uid + c.parameter}><td>{c.component}</td><td>{SETTING_LABEL[c.parameter] ?? c.parameter}</td><td>{c.from}</td><td><b>{c.to}</b></td></tr>)}
                 </tbody>
               </table>
             </div>
@@ -84,7 +94,7 @@ export function SolvePanel(p: Props) {
               {o.after.map((a) => <li key={a.targetId} className={a.pass ? 'pass-text' : 'fail-text'}>{a.pass ? '✓' : '✗'} {a.label}: {a.text}</li>)}
             </ul>
           )}
-          {o.changes.length > 0 && <p className="hint">Rough installed cost {Math.round(o.costBefore).toLocaleString()} → {Math.round(o.costAfter).toLocaleString()} (placeholder rates). {o.solves} network solutions tried. The changed components are highlighted on the network.</p>}
+          {o.changes.length > 0 && <p className="hint">Rough cost {Math.round(o.costBefore).toLocaleString()} → {Math.round(o.costAfter).toLocaleString()} (placeholder rates).</p>}
           <div className="toolbar">
             <button className="primary" disabled={o.changes.length === 0 || p.stale} onClick={p.onApply}>Apply these changes</button>
             <button onClick={p.onDiscard}>Discard</button>
@@ -143,7 +153,7 @@ export function SolvePanel(p: Props) {
 
       <details className="panel" open={p.locked.size > 0}>
         <summary>Don't change these ({p.locked.size} locked)</summary>
-        <p className="hint">A locked node keeps everything connected to it as it is. You can also lock the selected item from its Properties. Locked items show a 🔒 on the network.</p>
+        <p className="hint">A locked node also locks everything attached to it.</p>
         <div className="lock-list">
           {items.map((i) => (
             <label key={i.uid} className="check"><input type="checkbox" checked={p.locked.has(i.uid)} onChange={() => p.onToggleLock(i.uid)} /> {i.name} <small>{i.kind}</small></label>

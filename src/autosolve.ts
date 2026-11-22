@@ -1,6 +1,6 @@
 /**
  * "Solve this for me": keep every component, and change only what the user allows (and has not locked) until the design targets pass.
- * No AI: a deterministic search that calls the same solver as the rest of the app.
+ * A deterministic search that calls the same solver as the rest of the app.
  *
  *  1. Work out how far the targets are missed (the sum of the relative shortfalls).
  *  2. Try each allowed change (one step to the next pipe size, or a step in a pump speed, valve setting, bore, ...). Keep the one that

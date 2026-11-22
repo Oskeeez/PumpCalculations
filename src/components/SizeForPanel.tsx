@@ -51,8 +51,7 @@ export function SizeForPanel({ project, edge, locked, onApply }: { project: Proj
 
   return (
     <details className="sizing size-for">
-      <summary>Size this {edge.kind === 'pipe' ? 'pipe' : edge.kind === 'pump' ? 'pump speed' : 'item'} for a flow or pressure</summary>
-      <p className="hint">Changes only this item's {what}, nothing else, until the goal is met. The goal is a minimum, so a little more is fine.</p>
+      <summary>Size this for a flow or pressure ({what})</summary>
       <div className="grid">
         <label className="field"><span>Goal</span>
           <select value={mode} onChange={(e) => { setMode(e.target.value as 'flow' | 'pressure'); setOutcome(undefined); }}>

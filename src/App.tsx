@@ -416,7 +416,7 @@ export function App() {
               </section>
             )}
             {(selNode || selEdge) && (
-              <label className="lock-toggle" title="The Solve for me button will not change this item, or anything attached to a locked node.">
+              <label className="lock-toggle" title="Solve for me leaves this alone">
                 <input type="checkbox" checked={lockedSet.has((selNode ?? selEdge)!.uid)} onChange={() => toggleLock((selNode ?? selEdge)!.uid)} />
                 <span>🔒 Don't change this when solving for me</span>
               </label>
@@ -490,7 +490,7 @@ export function App() {
       case 'targets':
         return (
           <>
-            <TargetsPanel project={project} targets={targets} statuses={targetStatuses} onChange={(t) => setProject((p) => ({ ...p, targets: t }), 'targets')} pickId={pick?.id} onPick={startPick} />
+            <TargetsPanel project={project} targets={targets} statuses={targetStatuses} onChange={(t) => setProject((p) => ({ ...p, targets: t }), 'targets')} pickId={pick?.id} onPick={startPick} onSolve={() => showPanel('solve')} />
             {(project.assumptions ?? []).length > 0 && (
               <>
                 <h4>Assumptions from AI-built parts ({project.assumptions!.length})</h4>

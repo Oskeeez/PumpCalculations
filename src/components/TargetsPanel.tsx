@@ -16,6 +16,8 @@ interface Props {
   pickId?: string;
   /** Ask the user to click a node / pump / line on the network; `apply` receives its uid. */
   onPick: (id: string, accept: PickAccept, label: string, apply: (uid: string) => void) => void;
+  /** Open the Solve for me tab. */
+  onSolve?: () => void;
 }
 
 const TYPES: { id: Target['type']; label: string }[] = [
@@ -26,7 +28,7 @@ const TYPES: { id: Target['type']; label: string }[] = [
   { id: 'npsh', label: 'NPSH margin' },
 ];
 
-export function TargetsPanel({ project, targets, statuses, onChange, pickId, onPick }: Props) {
+export function TargetsPanel({ project, targets, statuses, onChange, pickId, onPick, onSolve }: Props) {
   const nodes = project.nodes;
   const pumps = project.edges.filter((e) => e.kind === 'pump');
   const lines = project.edges.filter((e) => e.kind === 'pipe' || e.kind === 'valve');
@@ -85,7 +87,7 @@ export function TargetsPanel({ project, targets, statuses, onChange, pickId, onP
 
   return (
     <div className="targets">
-      <p className="hint">Targets are checked against the solver every time the network changes. Pressures are gauge. The AI works toward these.</p>
+      <p className="hint">Pressures are gauge.</p>
       {targets.length === 0 && <p className="hint">No targets yet. Add one below.</p>}
       {targets.map((t) => {
         const s = stat(t.id);
@@ -132,6 +134,11 @@ export function TargetsPanel({ project, targets, statuses, onChange, pickId, onP
         <span>Add target:</span>
         {TYPES.map((t) => <button key={t.id} onClick={() => add(t.id)}>{t.label}</button>)}
       </div>
+      {onSolve && targets.length > 0 && (
+        <div className="toolbar">
+          <button className="primary" onClick={onSolve}>Solve this for me…</button>
+        </div>
+      )}
     </div>
   );
 }
